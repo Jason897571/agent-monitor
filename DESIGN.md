@@ -205,18 +205,24 @@ ignore → change-blind → make-aware → interrupt → demand-attention
 
 绑定 `statusUpdatedAt` 做**时间驱动的自动升级**：
 
-| 状态 | 初始等级 | 升级规则 |
+| 状态 | 初始等级 | 时间台阶 |
 |---|---|---|
-| `dormant` | ignore | **永不升级**（唯一一个） |
+| `dormant` | ignore | **永不变化**（唯一一个） |
 | `busy` | ignore | — |
 | `shell` | change-blind | — |
-| `idle` | change-blind | 2 分钟后 → make-aware |
-| `waiting` + `waitingFor` | make-aware | 90 秒 → interrupt；5 分钟 → demand-attention |
-| `awaiting-permission` | make-aware | 20 秒 → interrupt |
-| `done-success` | make-aware | **永不升级到 interrupt** |
-| 额度 > 90% | make-aware 一次 | 带 `resets_at` 倒计时，不重复 |
+| `idle` | change-blind | 2 分钟 → make-aware；**30 分钟 → 退回 change-blind** |
+| `waiting` + `waitingFor` | make-aware | 90 秒 → interrupt；5 分钟 → demand-attention；**1 小时 → 退回 make-aware** |
+| `awaiting-permission` | make-aware | 20 秒 → interrupt（P1） |
+| `done-success` | make-aware | **永不升到 interrupt**（P1） |
+| 额度 > 90% | make-aware 一次 | 带 `resets_at` 倒计时，不重复（P1） |
 
-最后一行是硬规则：临床告警疲劳研究里，打断式告警的**忽略率是 49–96%**。而用户现状的基线是——同一个 `Glass.aiff` 同时用于"完成"和"需要输入"。只有**阻塞且用户可解决**的状态配得上 interrupt。
+**台阶可升也可降，这不是客气，是这张表能否成立的前提。**
+
+只升不降的阶梯会把每个长寿会话永久钉在它最吵的那一级。这不是推演——第一次拿真机跑就复现了：13 个会话 idle 了几小时到 13 天，全部停在 make-aware，整体注意力被一个"空闲 13 天"的会话钉住。**一个永远亮着的信号等于没有信号**，而这正是临床研究里打断式告警**忽略率 49–96%** 的成因。
+
+所以正确的形状是**窗口**：进入某状态后短时间内值得一瞥，等到显然你已经看见并选择了不处理，就安静退回去。`waiting` 同样要衰减——一小时都没喊动，再喊也没用，而一个被丢在半路的会话不该让宠物连喊三天。它仍然可见，只是不再打断。
+
+另一条硬规则：只有**阻塞且用户可解决**的状态配得上 interrupt。用户现状的基线是——同一个 `Glass.aiff` 同时用于"完成"和"需要输入"。
 
 ### 支点 D：Agent Teams 拓扑（真护城河）
 
@@ -381,6 +387,12 @@ link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 12, preferr
 | 空闲 CPU | ≤ 0.3% 单核 | 对齐 OpenUsage 地板 |
 | 动画中 CPU | ≤ 1% 单核 | 10fps 待机动画 |
 | TCC 权限 | **0 个**（P0/P1） | 见下 |
+
+**已测（2026-09-23，数据层）**：`agent-monitor-cli watch` 盯着 14 个真实会话，**debug 未优化构建**，运行 60 秒累计 CPU 0.05 秒 —— **0.083% 单核，RSS 7.2 MB**。
+
+这个数字之所以低，是因为定时器不轮询：它睡到"下一次注意力等级会自己变化"的确切时刻（`AttentionAssessment.nextChange`），所有会话都settle 之后就完全不排程，只靠 FSEvents 唤醒。
+
+> 结论不是"能耗问题解决了"，而是**数据层不是瓶颈，整个预算都留给渲染**。真正的风险仍然在那个常驻动画的透明窗口上，那部分还没写。
 
 三个免费且无需授权的省电闸门，`NSProcessInfo` 上都有：`thermalState`、`isLowPowerModeEnabled`、`beginActivity(options:reason:)`。宠物的帧率应该同时受这三者约束。
 

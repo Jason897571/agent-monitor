@@ -11,7 +11,8 @@ holds the evidence behind every claim in it.
 
 ```sh
 swift build
-swift run agent-monitor-cli     # dump every live session the core can see
+swift run agent-monitor-cli           # one-shot: every live session the core can see
+swift run agent-monitor-cli watch     # follow live, printing whenever the pet would change
 ./scripts/test.sh
 ```
 
@@ -51,12 +52,23 @@ DESIGN.md §8.
 - Verifies liveness properly: a pid that still exists, held by a process whose kernel
   start time matches the recorded one. Neither file age nor `updatedAt` is evidence of
   anything; there is no heartbeat.
-- 34 tests, several of which are regression locks on traps documented in DESIGN.md §7.
+- Follows changes live: FSEvents for what the filesystem can report, plus a reconcile
+  timer for what it cannot — a *crashed* session leaves its file untouched, so process
+  death produces no event at all.
+- The attention ladder, as data: five levels, per-state rules that rise *and decay*,
+  and a computed "when could this change on its own" deadline.
+- 61 tests, several of which are regression locks on traps documented in DESIGN.md §7.
 
 **Not built yet**
 
-Attention escalation, the FSEvents watcher, both window modes, sprite rendering, Codex,
-and everything in P1/P2. See DESIGN.md §6.
+Both window modes, sprite rendering, Codex, and everything in P1/P2. See DESIGN.md §6.
+
+**Measured**
+
+Watching 14 live sessions, debug build: **0.083% of one core, 7.2 MB RSS** over a
+60-second run. The timer does not poll — it sleeps until the exact instant some
+session's attention level could change, and schedules nothing at all once they have
+all settled. The rendering layer is where the energy budget will actually be spent.
 
 ## The two bugs worth knowing about
 

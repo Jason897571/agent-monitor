@@ -39,9 +39,17 @@ public struct ClaudeSessionSource: Sendable {
     }
 
     public let locator: ClaudeConfigLocator
+    /// How liveness is checked. Injectable so the scan path can be exercised against
+    /// synthetic session files without needing real processes to exist.
+    let inspector: @Sendable (pid_t) -> ProcessInspector.Info?
 
     public init(locator: ClaudeConfigLocator = .resolve()) {
+        self.init(locator: locator, inspector: { ProcessInspector.info(of: $0) })
+    }
+
+    init(locator: ClaudeConfigLocator, inspector: @escaping @Sendable (pid_t) -> ProcessInspector.Info?) {
         self.locator = locator
+        self.inspector = inspector
     }
 
     public func scan(now: Date = Date()) -> ScanResult {
@@ -59,7 +67,7 @@ public struct ClaudeSessionSource: Sendable {
             let filename = url.lastPathComponent
             do {
                 let file = try ClaudeSessionFile.decode(contentsOf: url)
-                switch Self.makeSession(from: file) {
+                switch Self.makeSession(from: file, inspector: inspector) {
                 case .success(let session):
                     sessions.append(session)
                 case .failure(let reason):
