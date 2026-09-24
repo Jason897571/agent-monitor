@@ -100,7 +100,10 @@ final class PetController {
     }
 
     private func applyMode() {
-        if mode != .pet { card.hide() }
+        // The card belongs to whichever shell opened it; after a switch it would be
+        // anchored to a window that is no longer on screen.
+        card.hide()
+        isHovered = false
         switch mode {
         case .pet:
             docked.orderOut(nil)
@@ -213,17 +216,28 @@ final class PetController {
     }
 
     private func updateHover() {
-        guard mode == .pet else { return }
-        // Keep the window grabbable for the whole of a drag; losing pointer capture
-        // halfway through a gesture is the classic failure of this pattern.
-        if view.isDragging { return }
-
         let screenPoint = NSEvent.mouseLocation
-        let windowPoint = panel.convertPoint(fromScreen: screenPoint)
-        let viewPoint = view.convert(windowPoint, from: nil)
-        let hovering = view.bounds.contains(viewPoint) && view.bodyContains(viewPoint)
+        let hovering: Bool
 
-        panel.ignoresMouseEvents = !hovering
+        switch mode {
+        case .pet:
+            // Keep the window grabbable for the whole of a drag; losing pointer capture
+            // halfway through a gesture is the classic failure of this pattern.
+            if view.isDragging { return }
+            let windowPoint = panel.convertPoint(fromScreen: screenPoint)
+            let viewPoint = view.convert(windowPoint, from: nil)
+            hovering = view.bounds.contains(viewPoint) && view.bodyContains(viewPoint)
+            panel.ignoresMouseEvents = !hovering
+
+        case .docked:
+            // The bar stays click-through: it only needs to notice the pointer, never to
+            // take a click meant for the menu bar behind it. A global mouse monitor still
+            // sees the movement, so a plain frame test is enough. `insetBy` with a
+            // negative dy gives the top edge a point of slack, because a cursor pushed
+            // against the top of the screen reports y == maxY, which NSRect excludes.
+            hovering = docked.isVisible && docked.frame.insetBy(dx: 0, dy: -1).contains(screenPoint)
+        }
+
         guard hovering != isHovered else { return }
         isHovered = hovering
         refreshPresentation()
@@ -249,8 +263,13 @@ final class PetController {
     }
 
     func showCard() {
-        guard mode == .pet else { return }
-        card.show(sessions: latest?.sessions ?? [], near: panel.frame, on: panel.screen)
+        let sessions = latest?.sessions ?? []
+        switch mode {
+        case .pet:
+            card.show(sessions: sessions, near: panel.frame, on: panel.screen, edge: .side)
+        case .docked:
+            card.show(sessions: sessions, near: docked.frame, on: docked.screen, edge: .below)
+        }
     }
 
     // MARK: - Hotkey

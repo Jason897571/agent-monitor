@@ -57,11 +57,23 @@ final class SessionCardPanel: NSPanel {
 
     var isShowing: Bool { isVisible && alphaValue > 0 }
 
-    /// Shows or refreshes the card beside `anchor`, the pet's frame in screen coordinates.
-    func show(sessions: [AgentSession], near anchor: NSRect, on screen: NSScreen?) {
+    /// Where the card opens relative to the window that summoned it.
+    enum Edge {
+        /// Beside the free-floating pet.
+        case side
+        /// Hanging from the docked bar, like a menu from the menu bar.
+        case below
+    }
+
+    /// Shows or refreshes the card next to `anchor`, a frame in screen coordinates.
+    func show(sessions: [AgentSession], near anchor: NSRect, on screen: NSScreen?, edge: Edge) {
         host.rootView = SessionCardView(sessions: sessions.orderedForDisplay(), now: Date())
         let size = host.fittingSize
-        setFrame(Self.placement(for: size, beside: anchor, within: screen?.visibleFrame), display: true)
+        let frame = switch edge {
+        case .side: Self.placement(for: size, beside: anchor, within: screen?.visibleFrame)
+        case .below: Self.placement(for: size, below: anchor, within: screen?.visibleFrame)
+        }
+        setFrame(frame, display: true)
 
         guard !isShowing else { return }
         orderFrontRegardless()
@@ -82,6 +94,19 @@ final class SessionCardPanel: NSPanel {
                 self.orderOut(nil)
             }
         })
+    }
+
+    /// Centred under the docked bar. `visibleFrame` already excludes the menu bar, so
+    /// clamping to it keeps the card from sliding up underneath the bar it hangs from.
+    static func placement(for size: NSSize, below anchor: NSRect, within bounds: NSRect?) -> NSRect {
+        let gap: CGFloat = 6
+        var x = anchor.midX - size.width / 2
+        var y = anchor.minY - gap - size.height
+        if let bounds {
+            x = min(max(x, bounds.minX + gap), bounds.maxX - size.width - gap)
+            y = min(max(y, bounds.minY + gap), bounds.maxY - size.height)
+        }
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
 
     /// Beside the pet on whichever side has room, preferring the side facing the middle
