@@ -30,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // an LSUIElement key in it.
         NSApp.setActivationPolicy(.accessory)
 
+        if arguments.contains("--jump-test") {
+            Task { @MainActor in await runJumpTest(); NSApp.terminate(nil) }
+            return
+        }
+
         let locator = ClaudeConfigLocator.resolve()
         let controller = PetController(
             registry: SessionRegistry(source: ClaudeSessionSource(locator: locator)),
@@ -162,3 +167,56 @@ let application = NSApplication.shared
 let delegate = AppDelegate(selfTestDuration: selfTestDuration, fadePolicy: fadePolicy, startMode: startMode)
 application.delegate = delegate
 application.run()
+
+/// Diagnoses click-to-jump without a mouse: resolves every live session's host app,
+/// then tries each activation route on one of them and reports which actually moved the
+/// frontmost app. Activation on macOS 14+ is cooperative and easy to get silently
+/// refused, so this is measured rather than assumed.
+@MainActor
+func runJumpTest() async {
+    let registry = SessionRegistry(source: ClaudeSessionSource(locator: ClaudeConfigLocator.resolve()))
+    let sessions = await registry.refresh().sessions
+    print("HOST APPS")
+    for session in sessions {
+        let host = HostApp.find(for: session.pid)
+        let name = host.map { "\($0.app.localizedName ?? "?") [\($0.app.bundleIdentifier ?? "?")] via \($0.source.rawValue)" } ?? "NOT FOUND"
+        print("  \(String(session.pid).padding(toLength: 7, withPad: " ", startingAt: 0)) \(session.displayName.padding(toLength: 22, withPad: " ", startingAt: 0)) → \(name)")
+    }
+
+    let front = { NSWorkspace.shared.frontmostApplication?.localizedName ?? "?" }
+    guard let target = sessions.compactMap({ s in HostApp.find(for: s.pid).map { (s, $0.app) } })
+            .first(where: { $0.1 != NSWorkspace.shared.frontmostApplication }) else {
+        print("\nno session hosted by a non-frontmost app to test activation on")
+        return
+    }
+    let app = target.1
+    print("\nACTIVATION → \(app.localizedName ?? "?")   (frontmost before: \(front()))")
+
+    app.activate()
+    try? await Task.sleep(for: .milliseconds(400))
+    print("  plain activate()                 frontmost: \(front())")
+
+    NSApp.activate()
+    NSApp.yieldActivation(to: app)
+    app.activate()
+    try? await Task.sleep(for: .milliseconds(400))
+    print("  self-activate + yield + activate frontmost: \(front())")
+
+    if let url = app.bundleURL {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.addsToRecentItems = false
+        _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        try? await Task.sleep(for: .milliseconds(400))
+        print("  NSWorkspace.openApplication      frontmost: \(front())")
+    }
+
+    // End to end, through the function the card actually calls: jump to a session hosted
+    // by whichever app is *not* frontmost now.
+    guard let other = sessions.first(where: { HostApp.find(for: $0.pid)?.app != NSWorkspace.shared.frontmostApplication }),
+          let otherApp = HostApp.find(for: other.pid)?.app else { return }
+    print("\nHostApp.activate(\(other.displayName)) → expecting \(otherApp.localizedName ?? "?")")
+    HostApp.activate(for: other)
+    try? await Task.sleep(for: .milliseconds(800))
+    print("  frontmost: \(front())  \(NSWorkspace.shared.frontmostApplication == otherApp ? "✓" : "✗")")
+}

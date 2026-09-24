@@ -471,7 +471,7 @@ link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 12, preferr
 ### P2 — 交互（目标 +4–6 周，风险最高）
 
 - [ ] GUI 审批：`PreToolUse` 阻塞 → 本地 socket → 面板 → 返回 allow/deny
-- [ ] 终端精准跳转（分层降级，见下）
+- [ ] 终端精准跳转（分层降级，见下）—— **Tier 4（只激活应用）已提前做了**：卡片里点会话行，沿进程树找到宿主应用并切到前台，本机 14/14 会话都能找到宿主。标签页和分屏级别的精确跳转仍在这里
 - [ ] 全局快捷键（此时才申请 Accessibility）
 
 ---

@@ -304,6 +304,17 @@ final class PetController {
         closeCard()
     }
 
+    /// Brings forward the app the session runs in, then gets out of the way.
+    private func jump(to session: AgentSession) {
+        guard HostApp.activate(for: session) else {
+            // Nothing to jump to — a session under a daemon with no app anywhere in its
+            // ancestry or environment. Say so rather than doing nothing silently.
+            NSSound.beep()
+            return
+        }
+        closeCard()
+    }
+
     private func closeCard() {
         stopWatchingCard()
         card.hide()
@@ -317,11 +328,14 @@ final class PetController {
 
     func showCard() {
         let sessions = latest?.sessions ?? []
+        let select: @MainActor (AgentSession) -> Void = { [weak self] session in
+            self?.jump(to: session)
+        }
         switch mode {
         case .pet:
-            card.show(sessions: sessions, near: panel.frame, on: panel.screen, edge: .side)
+            card.show(sessions: sessions, near: panel.frame, on: panel.screen, edge: .side, onSelect: select)
         case .docked:
-            card.show(sessions: sessions, near: docked.frame, on: docked.screen, edge: .below)
+            card.show(sessions: sessions, near: docked.frame, on: docked.screen, edge: .below, onSelect: select)
         }
         watchCard()
     }

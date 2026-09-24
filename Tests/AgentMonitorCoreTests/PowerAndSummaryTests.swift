@@ -216,3 +216,33 @@ struct DisplayOrderTests {
         #expect(ordered == [4, 2, 3, 1, 5])
     }
 }
+
+@Suite("process ancestry")
+struct ProcessAncestryTests {
+
+    @Test("walks up to, but not including, launchd")
+    func walksToLaunchd() {
+        let parents: [pid_t: pid_t] = [500: 400, 400: 300, 300: 1]
+        #expect(ProcessInspector.ancestry(of: 500, parent: { parents[$0] }) == [500, 400, 300])
+    }
+
+    @Test("stops where the table stops")
+    func stopsAtMissingParent() {
+        let parents: [pid_t: pid_t] = [500: 400]
+        #expect(ProcessInspector.ancestry(of: 500, parent: { parents[$0] }) == [500, 400])
+    }
+
+    /// A pid recycled mid-walk can make the table point back into itself.
+    @Test("a cycle terminates instead of hanging")
+    func cycleTerminates() {
+        let parents: [pid_t: pid_t] = [500: 400, 400: 500]
+        #expect(ProcessInspector.ancestry(of: 500, parent: { parents[$0] }) == [500, 400])
+    }
+
+    @Test("the live process tree reaches this test runner's own ancestors")
+    func liveTreeWorks() {
+        let chain = ProcessInspector.ancestry(of: getpid())
+        #expect(chain.first == getpid())
+        #expect(chain.count >= 2)
+    }
+}

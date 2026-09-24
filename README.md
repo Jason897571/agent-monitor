@@ -80,6 +80,9 @@ DESIGN.md §8.
   `NSScreen.screens` order is not stable across a dock cycle.
 - Session labels: a guaranteed short name, plus the model-written description of what
   the session is about when one can be found.
+- Hover the pet or the docked bar for a card listing every session; click a row to
+  bring forward the app it runs in (Ghostty, Cursor, iTerm…). App-level only — the
+  right window of that app, not yet the exact tab or split.
 - 98 tests, several of which are regression locks on traps documented in DESIGN.md §7.
 
 **Not built yet**

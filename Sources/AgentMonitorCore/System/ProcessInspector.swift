@@ -46,6 +46,38 @@ public enum ProcessInspector {
         return errno == EPERM
     }
 
+    // MARK: - Ancestry
+
+    /// The parent of `pid`, or `nil` if it is gone.
+    public static func parent(of pid: pid_t) -> pid_t? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var proc = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        let rc = mib.withUnsafeMutableBufferPointer { mibBuffer in
+            sysctl(mibBuffer.baseAddress, u_int(mibBuffer.count), &proc, &size, nil, 0)
+        }
+        guard rc == 0, size > 0, proc.kp_proc.p_pid == pid else { return nil }
+        return proc.kp_eproc.e_ppid
+    }
+
+    /// `pid` and each of its ancestors, nearest first, stopping before launchd.
+    public static func ancestry(of pid: pid_t) -> [pid_t] {
+        ancestry(of: pid, parent: { parent(of: $0) })
+    }
+
+    /// The walk itself, with the parent lookup injected so it can be tested without a
+    /// real process tree. Bounded, because a corrupt or racing table must not hang it.
+    static func ancestry(of pid: pid_t, parent: (pid_t) -> pid_t?, limit: Int = 64) -> [pid_t] {
+        var chain: [pid_t] = []
+        var current = pid
+        while current > 1, chain.count < limit, !chain.contains(current) {
+            chain.append(current)
+            guard let next = parent(current) else { break }
+            current = next
+        }
+        return chain
+    }
+
     // MARK: - Enumeration
 
     /// All processes whose `p_comm` is one of `names`.

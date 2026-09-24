@@ -10,7 +10,7 @@ import SwiftUI
 @MainActor
 final class SessionCardPanel: NSPanel {
 
-    private let host = NSHostingView(rootView: SessionCardView(sessions: [], now: Date()))
+    private let host = FirstClickHostingView(rootView: SessionCardView(sessions: [], now: Date(), onSelect: { _ in }))
     private let effect = NSVisualEffectView()
 
     init() {
@@ -67,8 +67,14 @@ final class SessionCardPanel: NSPanel {
     }
 
     /// Shows or refreshes the card next to `anchor`, a frame in screen coordinates.
-    func show(sessions: [AgentSession], near anchor: NSRect, on screen: NSScreen?, edge: Edge) {
-        host.rootView = SessionCardView(sessions: sessions.orderedForDisplay(), now: Date())
+    func show(
+        sessions: [AgentSession],
+        near anchor: NSRect,
+        on screen: NSScreen?,
+        edge: Edge,
+        onSelect: @escaping @MainActor (AgentSession) -> Void
+    ) {
+        host.rootView = SessionCardView(sessions: sessions.orderedForDisplay(), now: Date(), onSelect: onSelect)
         let size = host.fittingSize
         let frame = switch edge {
         case .side: Self.placement(for: size, beside: anchor, within: screen?.visibleFrame)
@@ -128,11 +134,21 @@ final class SessionCardPanel: NSPanel {
     }
 }
 
+/// Hosts SwiftUI in a window that is never key.
+///
+/// Such a window treats the first click as "bring me forward" and swallows it, so every
+/// row would have needed two clicks. Accepting the first mouse makes one enough.
+final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 /// One row per session, most urgent first.
 struct SessionCardView: View {
 
     let sessions: [AgentSession]
     let now: Date
+    /// Called when a row is clicked.
+    let onSelect: @MainActor (AgentSession) -> Void
 
     /// Beyond this the card stops being glanceable. The rest are summarised in a line.
     private let limit = 8
@@ -150,7 +166,7 @@ struct SessionCardView: View {
             } else {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(sessions.prefix(limit)) { session in
-                        SessionRow(session: session, now: now)
+                        SessionRow(session: session, now: now, onSelect: onSelect)
                     }
                 }
                 .padding(.vertical, 4)
@@ -191,6 +207,8 @@ private struct SessionRow: View {
 
     let session: AgentSession
     let now: Date
+    let onSelect: @MainActor (AgentSession) -> Void
+    @State private var isHovered = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -226,6 +244,16 @@ private struct SessionRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.primary.opacity(isHovered ? 0.08 : 0))
+                .padding(.horizontal, 6)
+        )
+        // The whole row is the target, not just the glyphs in it.
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onTapGesture { onSelect(session) }
+        .help("切到运行这个会话的应用")
     }
 
     private var label: String {
