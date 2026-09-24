@@ -30,6 +30,10 @@ final class PetController {
     private var watchdog: Timer?
     private var hotkey: GlobalHotkey?
     private var cardTimer: Timer?
+    /// Polls the pointer while the card is open. See `watchCard()`.
+    private var cardWatch: Timer?
+    /// When the pointer left the hover zone, or `nil` while it is inside.
+    private var leftCardZoneAt: Date?
     private var isHovered = false
     /// Keeps the card open regardless of hover — for previewing it without a mouse.
     var pinsCard = false
@@ -79,7 +83,7 @@ final class PetController {
 
     func stop() {
         savePosition()
-        card.hide()
+        closeCard()
         streamTask?.cancel()
         presentationTimer?.invalidate()
         watchdog?.invalidate()
@@ -102,7 +106,7 @@ final class PetController {
     private func applyMode() {
         // The card belongs to whichever shell opened it; after a switch it would be
         // anchored to a window that is no longer on screen.
-        card.hide()
+        closeCard()
         isHovered = false
         switch mode {
         case .pet:
@@ -247,19 +251,68 @@ final class PetController {
     // MARK: - Detail card
 
     /// A short dwell before showing, so sweeping the pointer across the screen does not
-    /// flash a card; a slightly longer grace before hiding, so a wobble off the edge of
-    /// the silhouette does not either.
+    /// flash a card. Hiding is not decided here: leaving the pet is exactly what the user
+    /// does on the way *to* the card, so that decision belongs to `watchCard()`.
     private func scheduleCard(visible: Bool) {
         cardTimer?.invalidate()
-        if !visible && pinsCard { return }
-        let delay = visible ? 0.25 : 0.35
-        cardTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+        guard visible else { return }
+        cardTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                guard let self else { return }
-                if visible, self.isHovered { self.showCard() }
-                if !visible, !self.isHovered { self.card.hide() }
+                guard let self, self.isHovered else { return }
+                self.showCard()
             }
         }
+    }
+
+    /// The region the pointer may wander in without closing the card: the window that
+    /// opened it, the card, and the gap between them, as one rectangle.
+    ///
+    /// Treating them separately closed the card the instant the pointer left the pet to
+    /// reach it — there was no way to get onto the card at all.
+    private var cardZone: NSRect {
+        let anchor = mode == .pet ? panel.frame : docked.frame
+        return anchor.union(card.frame).insetBy(dx: -6, dy: -6)
+    }
+
+    /// Keeps the card open while the pointer is anywhere in `cardZone`, and closes it a
+    /// moment after it leaves.
+    ///
+    /// Polled rather than event-driven. Once the pointer is over our own card, mouse-moved
+    /// events are routed to a window that is never key, and their delivery there is not
+    /// something to build on. A 0.1 s poll that exists only while the card is open costs
+    /// nothing measurable and cannot miss an exit.
+    private func watchCard() {
+        guard cardWatch == nil else { return }
+        leftCardZoneAt = nil
+        cardWatch = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkCardZone() }
+        }
+    }
+
+    private func checkCardZone() {
+        guard card.isVisible else { return stopWatchingCard() }
+        if pinsCard { return }
+
+        if cardZone.contains(NSEvent.mouseLocation) {
+            leftCardZoneAt = nil
+            return
+        }
+        // A short grace so clipping a corner on the way across does not slam it shut.
+        let left = leftCardZoneAt ?? Date()
+        leftCardZoneAt = left
+        guard Date().timeIntervalSince(left) >= 0.35 else { return }
+        closeCard()
+    }
+
+    private func closeCard() {
+        stopWatchingCard()
+        card.hide()
+    }
+
+    private func stopWatchingCard() {
+        cardWatch?.invalidate()
+        cardWatch = nil
+        leftCardZoneAt = nil
     }
 
     func showCard() {
@@ -270,6 +323,7 @@ final class PetController {
         case .docked:
             card.show(sessions: sessions, near: docked.frame, on: docked.screen, edge: .below)
         }
+        watchCard()
     }
 
     // MARK: - Hotkey

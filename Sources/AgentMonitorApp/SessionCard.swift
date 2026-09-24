@@ -25,8 +25,9 @@ final class SessionCardPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         isReleasedWhenClosed = false
-        // Display only: the card must never take a click meant for the window under it.
-        ignoresMouseEvents = true
+        // Takes clicks while it is open. It only exists while the pointer is on it or on
+        // its way to it, so there is no window behind it the user could be aiming for.
+        ignoresMouseEvents = false
         level = .statusBar
         var behaviour: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         if #available(macOS 13.0, *) {
