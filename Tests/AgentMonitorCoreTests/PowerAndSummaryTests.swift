@@ -246,3 +246,46 @@ struct ProcessAncestryTests {
         #expect(chain.count >= 2)
     }
 }
+
+@Suite("login shell")
+struct LoginShellTests {
+
+    /// HOME is set in every login shell, so this exercises the real round trip —
+    /// spawning, fencing the value between markers, parsing it back out.
+    @Test("reads a variable out of a real login shell")
+    func readsFromRealShell() {
+        #expect(LoginShell.value(of: "HOME", shell: "/bin/zsh") == NSHomeDirectory())
+    }
+
+    @Test("an unset variable is nil, not an empty string")
+    func unsetIsNil() {
+        #expect(LoginShell.value(of: "AGENT_MONITOR_DEFINITELY_UNSET_42", shell: "/bin/zsh") == nil)
+    }
+
+    /// The name is interpolated into a shell command; anything but an identifier is
+    /// refused before a process is ever started.
+    @Test("refuses a name that is not a plain identifier")
+    func refusesInjection() {
+        #expect(LoginShell.value(of: "HOME; rm -rf /", shell: "/bin/zsh") == nil)
+        #expect(LoginShell.value(of: "$(whoami)", shell: "/bin/zsh") == nil)
+    }
+
+    @Test("a shell that never finishes is abandoned after the timeout")
+    func timesOut() {
+        let started = Date()
+        #expect(LoginShell.value(of: "HOME", shell: "/bin/sleep", timeout: 0.5) == nil)
+        #expect(Date().timeIntervalSince(started) < 3)
+    }
+
+    @Test("the locator uses the shell only when nothing else answered")
+    func locatorFallsBackToShell() {
+        let locator = ClaudeConfigLocator.resolve(environment: [:], loginShell: { "/tmp/from-shell" })
+        // A running claude may answer first on a developer machine; either way the shell
+        // value must never beat an explicit environment variable.
+        #expect(locator.source != .defaultPath)
+
+        let explicit = ClaudeConfigLocator.resolve(
+            environment: ["CLAUDE_CONFIG_DIR": "/tmp/explicit"], loginShell: { "/tmp/from-shell" })
+        #expect(explicit.directory.path == "/tmp/explicit")
+    }
+}

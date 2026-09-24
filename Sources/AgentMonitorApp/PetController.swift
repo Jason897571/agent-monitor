@@ -96,6 +96,8 @@ final class PetController {
 
     // MARK: - Mode
 
+    var currentMode: Mode { mode }
+
     func toggleMode() {
         mode = mode.next
         UserDefaults.standard.set(mode.rawValue, forKey: Self.modeKey)

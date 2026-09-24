@@ -13,6 +13,7 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: PetController?
+    private var statusMenu: StatusMenu?
     private let selfTestDuration: TimeInterval?
     private let fadePolicy: FadePolicy
     private let startMode: PetController.Mode?
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         controller.start()
         self.controller = controller
+        statusMenu = StatusMenu(controller: controller)
         if showsCard {
             controller.pinsCard = true
             Task { @MainActor in

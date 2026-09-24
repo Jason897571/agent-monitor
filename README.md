@@ -18,9 +18,22 @@ swift run agent-monitor --selftest    # …and dump what the window server actua
 swift run agent-monitor-cli           # one-shot: every live session the core can see
 swift run agent-monitor-cli watch     # follow live, printing whenever the pet would change
 
-./scripts/test.sh                     # 98 tests
+./scripts/test.sh                     # 108 tests
 ./scripts/measure.sh                  # CPU and memory per pet state
+./scripts/package.sh 0.1.0            # dist/Agent Monitor.app + a drag-to-install DMG
 ```
+
+The package is universal (Apple silicon and Intel) and **ad-hoc signed** — there is no
+Developer ID behind it yet. It opens normally on the Mac that built it. A copy downloaded
+onto another Mac is blocked by Gatekeeper until you allow it under System Settings →
+Privacy & Security, or run:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Agent Monitor.app"
+```
+
+Quit it, or switch between the pet and the notch bar, from the paw-print icon in the
+menu bar.
 
 Requires macOS 14+ and a Swift 6 toolchain. Xcode is **not** required — the Command
 Line Tools are enough.

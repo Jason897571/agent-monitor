@@ -9,7 +9,9 @@ import Foundation
 /// The wrinkle is that an app launched from Finder does **not** inherit the user's shell
 /// exports, so reading our own environment is not enough. We therefore fall back to
 /// asking a running `claude` process what its config dir is — which works because the
-/// `claude` binary is not code-signing-restricted. See DESIGN.md §7.1 trap #1.
+/// `claude` binary is not code-signing-restricted — and, when none is running (an app
+/// started at login usually starts before any agent), to asking the user's login shell.
+/// See DESIGN.md §7.1 trap #1.
 public struct ClaudeConfigLocator: Sendable {
 
     public enum Source: Sendable, Equatable {
@@ -17,6 +19,8 @@ public struct ClaudeConfigLocator: Sendable {
         case ownEnvironment
         /// Recovered from a live `claude` process (pid included for diagnostics).
         case runningProcess(pid_t)
+        /// Read from the user's login shell configuration.
+        case loginShell
         /// Nothing told us otherwise; `~/.claude`.
         case defaultPath
     }
@@ -30,7 +34,8 @@ public struct ClaudeConfigLocator: Sendable {
     }
 
     public static func resolve(
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        loginShell: () -> String? = { LoginShell.value(of: "CLAUDE_CONFIG_DIR") }
     ) -> ClaudeConfigLocator {
         if let raw = environment["CLAUDE_CONFIG_DIR"], !raw.isEmpty {
             return ClaudeConfigLocator(directory: expand(raw), source: .ownEnvironment)
@@ -45,6 +50,12 @@ public struct ClaudeConfigLocator: Sendable {
             if let raw = env["CLAUDE_CONFIG_DIR"], !raw.isEmpty {
                 return ClaudeConfigLocator(directory: expand(raw), source: .runningProcess(process.pid))
             }
+        }
+
+        // Nothing running to ask. Without this step an app launched at login — before
+        // any agent — would settle on ~/.claude and watch the wrong directory for good.
+        if let raw = loginShell(), !raw.isEmpty {
+            return ClaudeConfigLocator(directory: expand(raw), source: .loginShell)
         }
 
         let fallback = FileManager.default.homeDirectoryForCurrentUser

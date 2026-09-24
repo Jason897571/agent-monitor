@@ -11,6 +11,7 @@ func describe(_ source: ClaudeConfigLocator.Source) -> String {
     switch source {
     case .ownEnvironment: return "own environment"
     case .runningProcess(let pid): return "running claude process (pid \(pid))"
+    case .loginShell: return "login shell"
     case .defaultPath: return "default ~/.claude"
     }
 }
