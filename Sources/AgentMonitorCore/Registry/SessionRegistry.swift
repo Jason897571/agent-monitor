@@ -55,6 +55,21 @@ public actor SessionRegistry {
     /// Floor on timer sleeps, so a misconfigured policy can never spin.
     private let minReconcileInterval: TimeInterval
 
+    /// Remembers which sessions we have already gone looking for a title for.
+    ///
+    /// Titles live in transcripts, which are large, slugged under an irreversible
+    /// directory name, and only written once the model has something to name. So the
+    /// lookup is comparatively expensive, frequently returns nothing early in a
+    /// session, and must not be repeated on every scan.
+    private struct TitleLookup {
+        let title: String?
+        let checkedAt: Date
+    }
+
+    private var titles: [String: TitleLookup] = [:]
+    /// How long to wait before looking again for a title that was not there yet.
+    private let titleRetryInterval: TimeInterval = 120
+
     private var watcher: DirectoryWatcher?
     private var reconcileTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
@@ -114,10 +129,11 @@ public actor SessionRegistry {
     @discardableResult
     public func refresh(now: Date = Date()) -> Snapshot {
         let result = source.scan(now: now)
+        let sessions = result.sessions.map { enrich($0, now: now) }
         let snapshot = Snapshot(
-            sessions: result.sessions,
+            sessions: sessions,
             aggregate: result.aggregate,
-            attention: escalator.assess(sessions: result.sessions, now: now),
+            attention: escalator.assess(sessions: sessions, now: now),
             rejected: result.rejected,
             at: now
         )
@@ -132,6 +148,36 @@ public actor SessionRegistry {
 
     private func removeContinuation(_ id: UUID) {
         continuations[id] = nil
+    }
+
+    /// Attaches a title, looking one up only when we have not recently tried.
+    private func enrich(_ session: AgentSession, now: Date) -> AgentSession {
+        if let cached = titles[session.id] {
+            // A title we already found will not change in a way worth re-reading a
+            // transcript for; one we did not find might appear once the model names
+            // the session, so that case is retried on a slow cadence.
+            if cached.title != nil || now.timeIntervalSince(cached.checkedAt) < titleRetryInterval {
+                return session.withTitle(cached.title)
+            }
+        }
+
+        let title = ClaudeTranscript
+            .url(forSessionID: session.id, in: source.locator)
+            .flatMap { ClaudeTranscript.latestTitle(in: $0) }
+        titles[session.id] = TitleLookup(title: title, checkedAt: now)
+
+        // Drop entries for sessions that are gone, so a long-running monitor does not
+        // accumulate one per session the machine has ever had.
+        if titles.count > 256 {
+            let live = Set(sessions(from: titles.keys))
+            titles = titles.filter { live.contains($0.key) }
+        }
+        return session.withTitle(title)
+    }
+
+    private func sessions(from keys: Dictionary<String, TitleLookup>.Keys) -> [String] {
+        guard let latest else { return Array(keys) }
+        return latest.sessions.map(\.id)
     }
 
     // MARK: - Watching

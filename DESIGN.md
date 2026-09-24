@@ -440,15 +440,21 @@ link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 12, preferr
 
 **验收标准：装上就能用，不改用户任何配置文件，不弹任何权限。**
 
-- [ ] `SessionRegistry`：FSEvents 监听 `$CLAUDE_CONFIG_DIR/sessions/`，`kill(pid,0)` + argv 校验存活
-- [ ] 五状态基线：`dormant` / `busy` / `shell` / `idle` / `waiting`（+ `waitingFor` 文案）
-- [ ] `dormant` 睡眠：暂停 displayLink、释放非必要资源；`dormant → busy` 的唤醒动画
-- [ ] 淡出：仅 `dormant` 触发（**`idle` 不淡**），10 分钟 → `alphaValue 0.25`，悬停/唤醒即恢复，淡出态仍可点击拖拽
-- [ ] `PetPanel` + `DockedPanel`，快捷键切换，多屏按 UUID 记忆
-- [ ] 精灵图渲染 + displayLink 限帧 + 遮挡/低电量暂停
-- [ ] 注意力升级器：五级阶梯 + 基于 `statusUpdatedAt` 的时间升级
-- [ ] 会话名牌：`name` → `ai-title` → `cwd` basename 逐级回退
-- [ ] 性能测试：`powermetrics` 实测并写进 README
+- [x] `SessionRegistry`：FSEvents 监听 `$CLAUDE_CONFIG_DIR/sessions/`，存活校验（启动时刻为准，进程名兜底）
+- [x] 五状态基线：`dormant` / `busy` / `shell` / `idle` / `waiting`（+ `waitingFor` 文案）
+- [x] `dormant` 睡眠：暂停 displayLink；`dormant → busy` 的唤醒动画
+- [x] 淡出：仅 `dormant` 触发（**`idle` 不淡**，有测试锁死），10 分钟 → `alphaValue 0.25`，悬停/唤醒即恢复，淡出态仍可点击拖拽
+- [x] `PetPanel` + `DockedPanel`，⌃⌥⌘P 切换，多屏按 CGDisplay UUID 记忆
+- [x] 精灵图渲染 + displayLink 限帧 + 遮挡/低电量/过热降级
+- [x] 注意力升级器：五级阶梯 + 基于 `statusUpdatedAt` 的时间升降
+- [x] 会话名牌 —— **实现与原计划不同，见下**
+- [x] 性能测试：见 §5.1
+
+> **名牌的实现偏离**：原计划是 `name` → `ai-title` → `cwd` basename 的回退链。但 `name` 字段几乎总是存在（如 `agent-monitor-e8`），那条链里 `ai-title` 永远轮不到。
+> 实际做成两个独立字段更有用：`displayName`（`name` → basename，**保证有值**）作卡片标签，`title`（`ai-title`，可能没有）作内容描述——它是模型写的、对人可读的一句话，比如「设计桌面宠物助手和任务监测系统」。
+> 代价：`title` 要按 sessionId 去 `projects/*/` 搜（slug 有损不可逆，算不出路径），且只读 transcript 末尾 256KB。所以它是**尽力而为**的，缓存 + 120 秒重试，拿不到就只用 `displayName`。
+
+**快捷键用 Carbon `RegisterEventHotKey`**，不是 `CGEventTap` —— 前者**不需要 Accessibility 授权**，这样 P0「零权限」的验收标准才守得住。默认 ⌃⌥⌘P 故意选得冷僻：某竞品占了 `Ctrl-U`，把每个终端的 readline kill-line 都吞了。
 
 **P0 明确不做**：审批、终端跳转、Codex、额度显示、hook 安装。
 

@@ -15,10 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: PetController?
     private let selfTestDuration: TimeInterval?
     private let fadePolicy: FadePolicy
+    private let startMode: PetController.Mode?
 
-    init(selfTestDuration: TimeInterval?, fadePolicy: FadePolicy) {
+    init(selfTestDuration: TimeInterval?, fadePolicy: FadePolicy, startMode: PetController.Mode?) {
         self.selfTestDuration = selfTestDuration
         self.fadePolicy = fadePolicy
+        self.startMode = startMode
         super.init()
     }
 
@@ -31,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let locator = ClaudeConfigLocator.resolve()
         let controller = PetController(
             registry: SessionRegistry(source: ClaudeSessionSource(locator: locator)),
-            fadePolicy: fadePolicy
+            fadePolicy: fadePolicy,
+            mode: startMode
         )
         controller.start()
         self.controller = controller
@@ -135,9 +138,16 @@ let fadePolicy: FadePolicy = {
     return .default
 }()
 
+// Which shell to start in. Normally remembered from last run and toggled with the
+// hotkey; the flag exists so either can be exercised directly.
+let startMode: PetController.Mode? = {
+    guard let index = arguments.firstIndex(of: "--mode"), index + 1 < arguments.count else { return nil }
+    return PetController.Mode(rawValue: arguments[index + 1])
+}()
+
 setvbuf(stdout, nil, _IOLBF, 0)
 
 let application = NSApplication.shared
-let delegate = AppDelegate(selfTestDuration: selfTestDuration, fadePolicy: fadePolicy)
+let delegate = AppDelegate(selfTestDuration: selfTestDuration, fadePolicy: fadePolicy, startMode: startMode)
 application.delegate = delegate
 application.run()

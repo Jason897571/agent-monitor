@@ -90,6 +90,9 @@ func render(_ snapshot: SessionRegistry.Snapshot, verbose: Bool) {
             if let waitingFor = session.waitingFor { row += "  [\(waitingFor)]" }
             if session.isBridged { row += "  [bridged]" }
             print(row)
+            if let title = session.title {
+                print("  \(String(repeating: " ", count: 42))↳ \(title)")
+            }
         }
     }
 

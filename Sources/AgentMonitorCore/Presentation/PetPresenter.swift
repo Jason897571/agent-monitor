@@ -10,6 +10,8 @@ public struct PetPresenter: Sendable, Equatable {
     public var fadePolicy: FadePolicy
     /// How long the waking animation plays before settling into the real pose.
     public var wakeDuration: TimeInterval
+    /// Machine conditions that cap how much the pet may spend. Updated by the host.
+    public var power: PowerConditions = .unconstrained
 
     private var aggregate: AggregateState
     private var attention: AttentionLevel
@@ -55,7 +57,7 @@ public struct PetPresenter: Sendable, Equatable {
         return PetPresentation(
             pose: pose,
             opacity: opacity,
-            framesPerSecond: framesPerSecond(for: pose, faded: faded)
+            framesPerSecond: power.cap(framesPerSecond(for: pose, faded: faded))
         )
     }
 

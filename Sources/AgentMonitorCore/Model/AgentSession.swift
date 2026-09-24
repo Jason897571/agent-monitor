@@ -38,6 +38,10 @@ public struct AgentSession: Sendable, Equatable, Identifiable {
     public let entrypoint: String?
     /// True when a Remote Control / claude.ai bridge is attached.
     public let isBridged: Bool
+    /// The model-generated description of what this session is about, if one has been
+    /// written yet. Best-effort and often absent early in a session — a label, never a
+    /// dependency. `displayName` is the one that always works.
+    public let title: String?
 
     public init(
         id: String,
@@ -52,7 +56,8 @@ public struct AgentSession: Sendable, Equatable, Identifiable {
         name: String? = nil,
         version: String? = nil,
         entrypoint: String? = nil,
-        isBridged: Bool = false
+        isBridged: Bool = false,
+        title: String? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -67,6 +72,18 @@ public struct AgentSession: Sendable, Equatable, Identifiable {
         self.version = version
         self.entrypoint = entrypoint
         self.isBridged = isBridged
+        self.title = title
+    }
+
+    /// Returns a copy carrying `title`. Used by the registry, which discovers titles
+    /// separately from and more slowly than session state.
+    public func withTitle(_ title: String?) -> AgentSession {
+        AgentSession(
+            id: id, agent: agent, pid: pid, cwd: cwd, state: state, waitingFor: waitingFor,
+            startedAt: startedAt, stateChangedAt: stateChangedAt, updatedAt: updatedAt,
+            name: name, version: version, entrypoint: entrypoint, isBridged: isBridged,
+            title: title
+        )
     }
 
     /// Label for a session card. Never derived from the project directory slug —

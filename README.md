@@ -17,7 +17,7 @@ swift run agent-monitor --selftest    # …and dump what the window server actua
 swift run agent-monitor-cli           # one-shot: every live session the core can see
 swift run agent-monitor-cli watch     # follow live, printing whenever the pet would change
 
-./scripts/test.sh                     # 81 tests
+./scripts/test.sh                     # 98 tests
 ./scripts/measure.sh                  # CPU and memory per pet state
 ```
 
@@ -46,7 +46,7 @@ DESIGN.md §8.
 
 ## Status
 
-**Working**
+**Working** — P0 is complete.
 
 - Resolves Claude Code's config directory, honouring `CLAUDE_CONFIG_DIR`, and falling
   back to reading it out of a running `claude` process when our own environment does
@@ -68,13 +68,19 @@ DESIGN.md §8.
   never appears in Cmd-Tab, is click-through except on the character itself, and can be
   dragged and snapped to a screen edge. It sleeps when no agents are running, wakes
   when one starts, and fades — but only ever while asleep.
-- Animation from pre-rendered sprite frames, at a frame rate chosen per pose and
-  paused outright once there is nothing to show.
+- A docked bar that welds to the notch, or hangs under the menu bar without one.
+  **⌃⌥⌘P** switches between the two. Registered through Carbon, which needs no
+  Accessibility permission — so the app still prompts for nothing at all.
+- Animation from pre-rendered sprite frames, at a frame rate chosen per pose, capped
+  by Low Power Mode and thermal pressure, and paused outright when nothing is visible.
+- Position remembered per display, keyed by CGDisplay UUID rather than by index —
+  `NSScreen.screens` order is not stable across a dock cycle.
+- Session labels: a guaranteed short name, plus the model-written description of what
+  the session is about when one can be found.
 
 **Not built yet**
 
-The docked (notch) mode, real character art, Codex, and everything in P1/P2.
-See DESIGN.md §6.
+Real character art, Codex, and everything in P1/P2. See DESIGN.md §6.
 
 **Measured**
 
