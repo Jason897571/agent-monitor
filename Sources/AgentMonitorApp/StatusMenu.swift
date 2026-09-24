@@ -45,6 +45,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         toggle.target = self
         menu.addItem(toggle)
 
+        menu.addItem(skinMenu())
+
         menu.addItem(.separator())
         addHookItems(to: menu)
 
@@ -56,6 +58,37 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(action("退出 Agent Monitor", #selector(quit), key: "q"))
+    }
+
+    /// Built-in placeholder plus every skin folder found, the current one ticked.
+    private func skinMenu() -> NSMenuItem {
+        let item = NSMenuItem(title: "角色", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let current = controller.currentSkinID
+        let placeholder = action("默认（占位形象）", #selector(chooseSkin(_:)))
+        placeholder.representedObject = nil
+        placeholder.state = current == nil ? .on : .off
+        submenu.addItem(placeholder)
+        for skin in SkinLibrary.available() {
+            let entry = action(skin.name, #selector(chooseSkin(_:)))
+            entry.representedObject = skin.id
+            entry.state = skin.id == current ? .on : .off
+            submenu.addItem(entry)
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(action("打开角色文件夹…", #selector(openSkins)))
+        item.submenu = submenu
+        return item
+    }
+
+    @objc private func chooseSkin(_ sender: NSMenuItem) {
+        controller.setSkin(id: sender.representedObject as? String)
+    }
+
+    @objc private func openSkins() {
+        let folder = SkinLibrary.directory
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(folder)
     }
 
     private func addHookItems(to menu: NSMenu) {

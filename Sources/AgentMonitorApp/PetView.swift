@@ -13,6 +13,30 @@ final class PetView: NSView {
     private var phase: Double = 0
     private var lastTick: CFTimeInterval = CACurrentMediaTime()
     private var dragOrigin: NSPoint?
+    /// When the current pose began, for skins: a GIF plays from its first frame each time
+    /// its pose starts, and the waking animation plays exactly once.
+    private var poseStartedAt: CFTimeInterval = CACurrentMediaTime()
+
+    /// A user-supplied character. `nil` draws the built-in placeholder.
+    var skin: Skin? {
+        didSet {
+            // Scaled stickers want smooth filtering; the placeholder is pre-rendered at
+            // the exact pixel size and must not be resampled at all.
+            layer?.magnificationFilter = skin == nil ? .nearest : .linear
+            layer?.minificationFilter = skin == nil ? .nearest : .trilinear
+            layer?.contentsGravity = skin == nil ? .resize : .resizeAspect
+            displayedFrame = nil
+            poseStartedAt = CACurrentMediaTime()
+            applyFrameRate()
+            presentCurrentFrame()
+        }
+    }
+
+    /// Upper bound on the animation rate, from the machine's power state. A skin's native
+    /// rate may lift the frame rate above the pose's default, never above this.
+    var frameRateCeiling: Int = 24 {
+        didSet { if frameRateCeiling != oldValue { applyFrameRate() } }
+    }
 
     /// How long one breathing cycle takes, in seconds.
     ///
@@ -25,6 +49,7 @@ final class PetView: NSView {
     var presentation: PetPresentation = PetPresentation(pose: .sleeping, opacity: 1, framesPerSecond: 2) {
         didSet {
             guard presentation != oldValue else { return }
+            if presentation.pose != oldValue.pose { poseStartedAt = CACurrentMediaTime() }
             applyFrameRate()
             // A pose change must land even when the animation is paused — a pet that
             // falls asleep at 0 fps still has to actually close its eyes.
@@ -74,7 +99,13 @@ final class PetView: NSView {
 
     private func applyFrameRate() {
         guard let displayLink else { return }
-        let fps = presentation.framesPerSecond
+        var fps = presentation.framesPerSecond
+        // A sticker authored at 25 fps played at the placeholder's 8 would stutter. Lift
+        // to the animation's own rate — but a pose the presenter paused stays paused, and
+        // the power ceiling still holds.
+        if fps > 0, let animation = currentAnimation {
+            fps = min(frameRateCeiling, max(fps, Int(animation.framesPerSecond.rounded())))
+        }
         guard fps > 0 else {
             // A faded, sleeping pet has nothing worth a frame. Pausing outright — not
             // throttling — is what keeps the most common state also the cheapest.
@@ -122,9 +153,16 @@ final class PetView: NSView {
     /// the render server composites it.
     private func presentCurrentFrame() {
         let scale = window?.backingScaleFactor ?? 2
-        guard let frame = sprites.image(
-            pose: presentation.pose, phase: phase, size: bounds.size, scale: scale
-        ) else { return }
+        let frame: CGImage
+        if let animation = currentAnimation {
+            let elapsed = CACurrentMediaTime() - poseStartedAt
+            frame = animation.frame(at: elapsed, loops: presentation.pose != .waking)
+        } else {
+            guard let rendered = sprites.image(
+                pose: presentation.pose, phase: phase, size: bounds.size, scale: scale
+            ) else { return }
+            frame = rendered
+        }
         guard frame !== displayedFrame else { return }
         displayedFrame = frame
         // Frames are swapped on purpose, so suppress the implicit contents crossfade.
@@ -152,7 +190,32 @@ final class PetView: NSView {
     /// clicks across its whole frame. Treating alpha hit testing as an optimisation
     /// instead of a correctness dependency means such a regression costs nothing.
     func bodyContains(_ point: NSPoint) -> Bool {
-        renderer.bodyPath(pose: presentation.pose, phase: phase, in: bounds).contains(point)
+        guard let animation = currentAnimation, let first = animation.frames.first else {
+            return renderer.bodyPath(pose: presentation.pose, phase: phase, in: bounds).contains(point)
+        }
+        // The image is aspect-fitted into the view; undo that to land in image space.
+        let image = CGSize(width: first.width, height: first.height)
+        let fit = min(bounds.width / image.width, bounds.height / image.height)
+        let drawn = CGSize(width: image.width * fit, height: image.height * fit)
+        let origin = CGPoint(x: bounds.midX - drawn.width / 2, y: bounds.midY - drawn.height / 2)
+        return animation.mask.contains(CGPoint(x: (point.x - origin.x) / drawn.width,
+                                               y: (point.y - origin.y) / drawn.height))
+    }
+
+    /// The skin's animation for the current pose, decoded at this view's pixel size.
+    private var currentAnimation: SkinAnimation? {
+        guard let skin else { return nil }
+        let pixels = Int(max(bounds.width, bounds.height) * (window?.backingScaleFactor ?? 2))
+        return skin.animation(for: presentation.pose, pixels: pixels)
+    }
+
+    /// How long the skin's waking animation runs, so the presenter can hold the pose
+    /// for exactly that long.
+    var skinWakeDuration: TimeInterval? {
+        guard let skin else { return nil }
+        let pixels = Int(max(bounds.width, bounds.height) * (window?.backingScaleFactor ?? 2))
+        guard skin.resolve(.waking) == .waking else { return nil }
+        return skin.animation(for: .waking, pixels: pixels)?.duration
     }
 
     // MARK: - Dragging

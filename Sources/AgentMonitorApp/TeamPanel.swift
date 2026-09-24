@@ -40,6 +40,12 @@ final class TeamPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// Teammates are drawn in the same character as the pet.
+    var skin: Skin? {
+        get { diagram.skin }
+        set { diagram.skin = newValue; diagram.needsDisplay = true }
+    }
+
     /// Shows `team` beside `anchor`, or hides when there is no one to show.
     func show(_ team: AgentTeam?, beside anchor: NSRect, on screen: NSScreen?) {
         guard let team, team.members.contains(where: { !$0.isLead }) else {
@@ -68,6 +74,7 @@ final class TeamPanel: NSPanel {
 final class TeamDiagramView: NSView {
 
     var team: AgentTeam?
+    var skin: Skin?
     /// Whether the diagram extends to the left of the pet (so the lead end is on the right).
     var opensLeft = true
 
@@ -132,7 +139,15 @@ final class TeamDiagramView: NSView {
                 TeamStyle.nsColour(.stalled).withAlphaComponent(0.35).setFill()
                 NSBezierPath(ovalIn: rect.insetBy(dx: -5, dy: -5)).fill()
             }
-            renderer.draw(pose: pose(for: member.state), phase: 0.3, in: rect)
+            if let still = skin?.still(for: pose(for: member.state)) {
+                let fit = min(rect.width / CGFloat(still.width), rect.height / CGFloat(still.height))
+                let size = NSSize(width: CGFloat(still.width) * fit, height: CGFloat(still.height) * fit)
+                NSImage(cgImage: still, size: size).draw(in: NSRect(
+                    x: rect.midX - size.width / 2, y: rect.midY - size.height / 2,
+                    width: size.width, height: size.height))
+            } else {
+                renderer.draw(pose: pose(for: member.state), phase: 0.3, in: rect)
+            }
             drawName(member.name, under: rect, colour: TeamStyle.nsColour(member.state))
         }
     }

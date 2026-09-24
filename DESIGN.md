@@ -370,6 +370,13 @@ link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 12, preferr
 | Spine | ❌ 年收入 $500K 以上强制 Enterprise $2,499/年 |
 | WebView | ❌ 实测一个 512px 弹跳圆球就吃掉 129MB、约 10% 单核 |
 
+> **已实现：用户皮肤（[docs/SKINS.md](docs/SKINS.md)）。**
+> - 皮肤是一个文件夹，放 GIF、APNG 或 PNG 加一个 `skin.json`，10 个姿态各对应一个文件，缺的姿态按"最近的亲戚"回退。
+> - 图片按显示尺寸一次解码，内存里只保留当前姿态。
+> - 点击区域取所有帧不透明像素的并集，再外扩一格。
+> - 皮肤放在 `~/Library/Application Support` 里，不进仓库，因为大部分人想用的角色都是别人的版权形象。
+> - petdex 格式兼容还没做。
+>
 > 素材获取路线：v1 买/生成一套 6 状态 × 6 帧、128×128 @2x 的图集（约 $0–100，一下午）。**并且实现 [petdex](https://petdex.dev) 的 `pet.json` + 精灵图格式**——它已经有 4,146★ 的素材库，兼容它等于白捡全部素材，而不是分裂生态。然后把我们多出来的状态名（`compacting` / `rate-limited` / `shelled-out` / `disconnected`）提 PR 回上游。
 
 ---

@@ -45,6 +45,7 @@ final class PetController {
 
     private static let size = NSSize(width: 132, height: 132)
     private static let modeKey = "pet.mode"
+    private static let skinKey = "pet.skin"
 
     init(registry: SessionRegistry, fadePolicy: FadePolicy = .default, mode: Mode? = nil) {
         self.registry = registry
@@ -56,6 +57,7 @@ final class PetController {
             ?? Mode(rawValue: UserDefaults.standard.string(forKey: Self.modeKey) ?? "")
             ?? .pet
         panel.contentView = view
+        if let id = UserDefaults.standard.string(forKey: Self.skinKey) { applySkin(SkinLibrary.load(id: id)) }
         // Click-through everywhere except the character's own silhouette. A pet that
         // eats clicks in the empty corners of its window is a pet users delete.
         panel.ignoresMouseEvents = true
@@ -97,6 +99,26 @@ final class PetController {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         Task { await registry.stop() }
+    }
+
+    // MARK: - Skin
+
+    var currentSkinID: String? { view.skin?.id }
+
+    /// Switches the character. `nil` goes back to the built-in placeholder.
+    func setSkin(id: String?) {
+        let skin = id.flatMap(SkinLibrary.load(id:))
+        UserDefaults.standard.set(skin?.id, forKey: Self.skinKey)
+        applySkin(skin)
+        refreshPresentation()
+    }
+
+    private func applySkin(_ skin: Skin?) {
+        view.skin = skin
+        teamPanel.skin = skin
+        // Hold the waking pose for as long as the skin's waking animation actually runs,
+        // within reason: a four-second stretch is charming once and tiresome daily.
+        presenter.wakeDuration = view.skinWakeDuration.map { min(max($0, 0.8), 3.0) } ?? 1.2
     }
 
     // MARK: - Mode
@@ -250,6 +272,7 @@ final class PetController {
         }
         guard power != presenter.power else { return }
         presenter.power = power
+        view.frameRateCeiling = power.cap(24)
         refreshPresentation()
     }
 

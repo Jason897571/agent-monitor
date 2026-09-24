@@ -67,6 +67,15 @@ shows a confirmation dialog that says exactly what it will change, backs up
 Adding another agent means writing a JSON manifest, not Swift. See
 [docs/AGENTS.md](docs/AGENTS.md).
 
+## Skins
+
+You can swap the placeholder character for any set of animated GIFs, APNGs or PNGs.
+Put them in a folder under `~/Library/Application Support/AgentMonitor/skins/` with a
+`skin.json`, then choose it from paw print → 角色. Each of the ten poses maps to one
+file, and any pose you leave out falls back to the nearest one you have. See
+[docs/SKINS.md](docs/SKINS.md). Skins stay on your machine; they are not part of the
+app or this repository.
+
 Requires macOS 14+ and a Swift 6 toolchain. Xcode is **not** required — the Command
 Line Tools are enough.
 
@@ -149,7 +158,8 @@ DESIGN.md §8.
 
 **Not built yet**
 
-Real character art and everything in P2. The agent-team topology has only been
+Original character art — the built-in one is still a placeholder, though any skin
+replaces it — and everything in P2. The agent-team topology has only been
 verified against synthetic data. See DESIGN.md §6.
 
 **Measured**

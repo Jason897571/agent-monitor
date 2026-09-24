@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // an LSUIElement key in it.
         NSApp.setActivationPolicy(.accessory)
 
+        if let index = arguments.firstIndex(of: "--preview-skin"), index + 2 < arguments.count {
+            let ok = previewSkin(id: arguments[index + 1], to: URL(fileURLWithPath: arguments[index + 2]))
+            exit(ok ? 0 : 1)
+        }
+
         if arguments.contains("--jump-test") {
             Task { @MainActor in await runJumpTest(); NSApp.terminate(nil) }
             return
@@ -44,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await registry.invalidate(.claudeCode) }
         }
         let controller = PetController(registry: registry, fadePolicy: fadePolicy, mode: startMode)
+        if let startSkin { controller.setSkin(id: startSkin) }
         controller.start()
         self.controller = controller
         self.integrations = integrations
@@ -175,6 +181,12 @@ let startMode: PetController.Mode? = {
     return PetController.Mode(rawValue: arguments[index + 1])
 }()
 
+// Picks a skin by folder name (and remembers it, like the menu does).
+let startSkin: String? = {
+    guard let index = arguments.firstIndex(of: "--skin"), index + 1 < arguments.count else { return nil }
+    return arguments[index + 1]
+}()
+
 // Opens the detail card without hovering — for previewing or screenshotting it.
 let showsCard = arguments.contains("--show-card")
 
@@ -237,4 +249,59 @@ func runJumpTest() async {
     HostApp.activate(for: other)
     try? await Task.sleep(for: .milliseconds(800))
     print("  frontmost: \(front())  \(NSWorkspace.shared.frontmostApplication == otherApp ? "✓" : "✗")")
+}
+
+
+/// Renders every pose of a skin — three frames each, with the clickable area tinted — into
+/// one PNG. For checking a skin without watching the pet cycle through ten states:
+///
+///   agent-monitor --preview-skin <folder> out.png
+@MainActor
+func previewSkin(id: String, to output: URL) -> Bool {
+    guard let skin = SkinLibrary.load(id: id) else {
+        print("no skin '\(id)' in \(SkinLibrary.directory.path) (missing, or skin.json unreadable)")
+        return false
+    }
+    let cell: CGFloat = 132, label: CGFloat = 18
+    let poses = PetPose.allCases
+    let size = NSSize(width: cell * 4, height: (cell + label) * CGFloat(poses.count))
+    let image = NSImage(size: size)
+    image.lockFocus()
+    NSColor(white: 0.93, alpha: 1).setFill()
+    NSRect(origin: .zero, size: size).fill()
+    for (row, pose) in poses.enumerated() {
+        let y = size.height - CGFloat(row + 1) * (cell + label)
+        let resolved = skin.resolve(pose)
+        let caption = resolved == pose ? pose.rawValue : "\(pose.rawValue) → \(resolved?.rawValue ?? "none")"
+        guard let animation = skin.animation(for: pose, pixels: 264) else { continue }
+        caption.appending(String(format: "  %d frames, %.1fs", animation.frames.count, animation.duration))
+            .draw(at: NSPoint(x: 4, y: y + cell + 2), withAttributes: [.font: NSFont.systemFont(ofSize: 11)])
+        for (column, fraction) in [0.0, 0.33, 0.66].enumerated() {
+            let frame = animation.frame(at: animation.duration * fraction)
+            let fit = min(cell / CGFloat(frame.width), cell / CGFloat(frame.height))
+            let drawn = NSSize(width: CGFloat(frame.width) * fit, height: CGFloat(frame.height) * fit)
+            let rect = NSRect(x: CGFloat(column) * cell + (cell - drawn.width) / 2, y: y + (cell - drawn.height) / 2,
+                              width: drawn.width, height: drawn.height)
+            NSImage(cgImage: frame, size: drawn).draw(in: rect)
+        }
+        // Fourth column: the hit mask, as the pet will use it.
+        let origin = NSPoint(x: cell * 3, y: y)
+        NSColor(calibratedRed: 0.2, green: 0.6, blue: 1, alpha: 0.55).setFill()
+        let first = animation.frames[0]
+        let fit = min(cell / CGFloat(first.width), cell / CGFloat(first.height))
+        let drawn = NSSize(width: CGFloat(first.width) * fit, height: CGFloat(first.height) * fit)
+        let inset = NSPoint(x: (cell - drawn.width) / 2, y: (cell - drawn.height) / 2)
+        for gy in stride(from: 0, to: drawn.height, by: 3) {
+            for gx in stride(from: 0, to: drawn.width, by: 3)
+            where animation.mask.contains(CGPoint(x: gx / drawn.width, y: gy / drawn.height)) {
+                NSRect(x: origin.x + inset.x + gx, y: origin.y + inset.y + gy, width: 3, height: 3).fill()
+            }
+        }
+    }
+    image.unlockFocus()
+    guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:]) else { return false }
+    do { try png.write(to: output) } catch { print(error); return false }
+    print("wrote \(output.path)")
+    return true
 }
