@@ -20,6 +20,7 @@ final class PetController {
     private let panel: PetPanel
     private let view: PetView
     private let docked: DockedPanel
+    private let card = SessionCardPanel()
     private var presenter: PetPresenter
 
     private var streamTask: Task<Void, Never>?
@@ -28,7 +29,10 @@ final class PetController {
     private var presentationTimer: Timer?
     private var watchdog: Timer?
     private var hotkey: GlobalHotkey?
+    private var cardTimer: Timer?
     private var isHovered = false
+    /// Keeps the card open regardless of hover — for previewing it without a mouse.
+    var pinsCard = false
     private var latest: SessionRegistry.Snapshot?
     private var mode: Mode
 
@@ -75,6 +79,7 @@ final class PetController {
 
     func stop() {
         savePosition()
+        card.hide()
         streamTask?.cancel()
         presentationTimer?.invalidate()
         watchdog?.invalidate()
@@ -95,6 +100,7 @@ final class PetController {
     }
 
     private func applyMode() {
+        if mode != .pet { card.hide() }
         switch mode {
         case .pet:
             docked.orderOut(nil)
@@ -112,6 +118,7 @@ final class PetController {
 
     private func apply(_ snapshot: SessionRegistry.Snapshot) {
         latest = snapshot
+        if card.isShowing { showCard() }
         presenter.observe(
             aggregate: snapshot.aggregate,
             attention: snapshot.attention.level,
@@ -220,6 +227,30 @@ final class PetController {
         guard hovering != isHovered else { return }
         isHovered = hovering
         refreshPresentation()
+        scheduleCard(visible: hovering)
+    }
+
+    // MARK: - Detail card
+
+    /// A short dwell before showing, so sweeping the pointer across the screen does not
+    /// flash a card; a slightly longer grace before hiding, so a wobble off the edge of
+    /// the silhouette does not either.
+    private func scheduleCard(visible: Bool) {
+        cardTimer?.invalidate()
+        if !visible && pinsCard { return }
+        let delay = visible ? 0.25 : 0.35
+        cardTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if visible, self.isHovered { self.showCard() }
+                if !visible, !self.isHovered { self.card.hide() }
+            }
+        }
+    }
+
+    func showCard() {
+        guard mode == .pet else { return }
+        card.show(sessions: latest?.sessions ?? [], near: panel.frame, on: panel.screen)
     }
 
     // MARK: - Hotkey
@@ -338,6 +369,10 @@ final class PetController {
     var diagnostics: [(String, String)] {
         panel.diagnostics + [
             ("mode", mode.rawValue),
+            ("card", card.isVisible
+                ? "visible alpha=\(String(format: "%.2f", card.alphaValue)) frame=\(Int(card.frame.minX)),\(Int(card.frame.minY)) \(Int(card.frame.width))x\(Int(card.frame.height))"
+                : "hidden"),
+            ("sessionsKnown", "\(latest?.sessions.count ?? -1)"),
             ("hotkey", GlobalHotkey.defaultDescription + (hotkey == nil ? " (FAILED)" : " (registered)")),
             ("pose", view.presentation.pose.rawValue),
             ("requestedFPS", "\(view.presentation.framesPerSecond)"),

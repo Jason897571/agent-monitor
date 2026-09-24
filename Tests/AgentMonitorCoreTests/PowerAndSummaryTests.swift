@@ -192,3 +192,27 @@ struct ClaudeTranscriptTests {
         #expect(ClaudeTranscript.latestTitle(in: url) == nil)
     }
 }
+
+@Suite("display order")
+struct DisplayOrderTests {
+
+    private func session(_ state: SessionState, pid: pid_t, changed: TimeInterval) -> AgentSession {
+        AgentSession(
+            id: "s\(pid)", agent: .claudeCode, pid: pid, cwd: "/tmp", state: state,
+            startedAt: .distantPast, stateChangedAt: Date(timeIntervalSince1970: changed),
+            updatedAt: .distantPast
+        )
+    }
+
+    @Test("blocked sessions first, then working, then recently idle before long idle")
+    func ordersByUrgencyThenRecency() {
+        let ordered = [
+            session(.idle, pid: 1, changed: 100),
+            session(.busy, pid: 2, changed: 50),
+            session(.idle, pid: 3, changed: 900),
+            session(.waiting, pid: 4, changed: 10),
+            session(.shell, pid: 5, changed: 999),
+        ].orderedForDisplay().map(\.pid)
+        #expect(ordered == [4, 2, 3, 1, 5])
+    }
+}

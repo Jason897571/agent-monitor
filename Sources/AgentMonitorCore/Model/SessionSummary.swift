@@ -38,3 +38,19 @@ public struct SessionSummary: Sendable, Equatable {
             }
     }
 }
+
+extension Array where Element == AgentSession {
+
+    /// The order a session list should be read in: whatever needs the user first.
+    ///
+    /// Most urgent state first, then within a state the most recently changed — a session
+    /// that went idle a minute ago is more likely to be the one you are thinking about
+    /// than one that has been idle for a week.
+    public func orderedForDisplay() -> [AgentSession] {
+        sorted { lhs, rhs in
+            if lhs.state.urgency != rhs.state.urgency { return lhs.state.urgency > rhs.state.urgency }
+            if lhs.stateChangedAt != rhs.stateChangedAt { return lhs.stateChangedAt > rhs.stateChangedAt }
+            return lhs.id < rhs.id
+        }
+    }
+}

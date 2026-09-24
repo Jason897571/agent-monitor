@@ -38,12 +38,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         controller.start()
         self.controller = controller
+        if showsCard {
+            controller.pinsCard = true
+            Task { @MainActor in
+                // Wait for the first snapshot so the card has something to show.
+                try? await Task.sleep(for: .seconds(1.5))
+                controller.showCard()
+            }
+        }
 
         guard let selfTestDuration else { return }
         print("config dir : \(locator.directory.path)")
         Task { @MainActor in
             // Let the window server settle before asking it what it thinks.
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(showsCard ? 2.5 : 1))
             report(controller)
 
             // Measure over a window that excludes launch.
@@ -144,6 +152,9 @@ let startMode: PetController.Mode? = {
     guard let index = arguments.firstIndex(of: "--mode"), index + 1 < arguments.count else { return nil }
     return PetController.Mode(rawValue: arguments[index + 1])
 }()
+
+// Opens the detail card without hovering — for previewing or screenshotting it.
+let showsCard = arguments.contains("--show-card")
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
