@@ -5,7 +5,8 @@ A desktop pet that ambiently mirrors what your AI coding agents are doing.
 Read [DESIGN.md](DESIGN.md) for what this is and why. [docs/RESEARCH.md](docs/RESEARCH.md)
 holds the evidence behind every claim in it.
 
-> Early. The state engine reads live Claude Code sessions; there is no pet yet.
+> Early, but it runs: the pet reads live Claude Code sessions and reacts to them.
+> Character art is a placeholder; Codex and the interactive features are not built.
 
 ## Build and run
 
@@ -34,9 +35,13 @@ passes nothing extra when a full Xcode is installed. Run it rather than `swift t
 ```
 Sources/
   AgentMonitorCore/     the state engine — no AppKit, deliberately
-    Model/              AgentSession, SessionState, AggregateState
-    Claude/             Claude Code adapter (config discovery, session files, liveness)
-    System/             sysctl-based process inspection
+    Model/              AgentSession, SessionState, AggregateState, SessionSummary
+    Claude/             Claude Code adapter (config, session files, liveness, titles)
+    Attention/          the five-level escalation ladder, as data
+    Presentation/       poses, fading, frame budget, power throttling
+    Registry/           FSEvents + reconcile, snapshots out
+    System/             sysctl process inspection, directory watching
+  AgentMonitorApp/      the only target that touches AppKit
   AgentMonitorCLI/      a harness for verifying the read path against a real machine
 ```
 
@@ -62,8 +67,6 @@ DESIGN.md §8.
   death produces no event at all.
 - The attention ladder, as data: five levels, per-state rules that rise *and decay*,
   and a computed "when could this change on its own" deadline.
-- 61 tests, several of which are regression locks on traps documented in DESIGN.md §7.
-
 - A floating pet: a non-activating panel that joins every Space, never takes focus,
   never appears in Cmd-Tab, is click-through except on the character itself, and can be
   dragged and snapped to a screen edge. It sleeps when no agents are running, wakes
@@ -77,6 +80,7 @@ DESIGN.md §8.
   `NSScreen.screens` order is not stable across a dock cycle.
 - Session labels: a guaranteed short name, plus the model-written description of what
   the session is about when one can be found.
+- 98 tests, several of which are regression locks on traps documented in DESIGN.md §7.
 
 **Not built yet**
 
