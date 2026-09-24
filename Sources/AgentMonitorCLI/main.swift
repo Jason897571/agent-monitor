@@ -6,6 +6,8 @@ import Foundation
 //
 //   swift run agent-monitor-cli          one-shot scan
 //   swift run agent-monitor-cli watch    follow live, printing whenever the pet would change
+//   swift run agent-monitor-cli watch --hooks
+//                                        …and listen for Claude Code hooks, like the app does
 
 func describe(_ source: ClaudeConfigLocator.Source) -> String {
     switch source {
@@ -13,16 +15,6 @@ func describe(_ source: ClaudeConfigLocator.Source) -> String {
     case .runningProcess(let pid): return "running claude process (pid \(pid))"
     case .loginShell: return "login shell"
     case .defaultPath: return "default ~/.claude"
-    }
-}
-
-func describe(_ reason: ClaudeSessionSource.Rejection) -> String {
-    switch reason {
-    case .unreadable(let message): return "unreadable: \(message)"
-    case .processGone: return "process gone"
-    case .commandMismatch(let command): return "pid recycled (now '\(command)')"
-    case .startTimeMismatch: return "pid recycled (start time differs)"
-    case .unknownStatus(let raw): return "unknown status '\(raw ?? "nil")'"
     }
 }
 
@@ -73,28 +65,56 @@ func render(_ snapshot: SessionRegistry.Snapshot, verbose: Bool) {
         print("no live sessions")
     } else {
         print("LIVE SESSIONS (\(snapshot.sessions.count))")
-        print(String(repeating: "-", count: 104))
-        print("  pid     state    in-state  attention      name                     cwd")
-        print(String(repeating: "-", count: 104))
+        print(String(repeating: "-", count: 114))
+        print("  agent   pid     state              in-state  attention      name                     cwd")
+        print(String(repeating: "-", count: 114))
         let escalator = AttentionEscalator()
         for session in snapshot.sessions {
             let level = escalator.policy
                 .rule(for: session.state)
                 .level(afterTimeInState: session.timeInState(now: snapshot.at))
+            let agent = session.agent.rawValue.prefix(7).padding(toLength: 8, withPad: " ", startingAt: 0)
             let pid = String(session.pid).padding(toLength: 8, withPad: " ", startingAt: 0)
-            let state = session.state.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
+            let state = session.state.rawValue.padding(toLength: 19, withPad: " ", startingAt: 0)
             let age = format(session.timeInState(now: snapshot.at))
                 .padding(toLength: 10, withPad: " ", startingAt: 0)
             let attn = describe(level).padding(toLength: 15, withPad: " ", startingAt: 0)
             let name = session.displayName.padding(toLength: 25, withPad: " ", startingAt: 0)
-            var row = "  \(pid)\(state)\(age)\(attn)\(name)\(session.cwd)"
+            var row = "  \(agent)\(pid)\(state)\(age)\(attn)\(name)\(session.cwd)"
             if let waitingFor = session.waitingFor { row += "  [\(waitingFor)]" }
             if session.isBridged { row += "  [bridged]" }
+            if session.subagents > 0 { row += "  [\(session.subagents) subagents]" }
+            if let used = session.contextUsedPercent { row += "  [context \(Int(used))%]" }
+            if let team = session.team { row += "  [team \(team)]" }
             print(row)
-            if let title = session.title {
-                print("  \(String(repeating: " ", count: 42))↳ \(title)")
-            }
+            let indent = String(repeating: " ", count: 60)
+            if let title = session.title { print("\(indent)↳ \(title)") }
+            if let activity = session.activity { print("\(indent)⋯ \(activity)") }
+            if let problem = session.problem { print("\(indent)! \(problem)") }
+            if let recap = session.recap { print("\(indent)“ \(recap.prefix(110))") }
         }
+    }
+
+    for quota in snapshot.quotas {
+        let windows = quota.current(now: snapshot.at).map { window -> String in
+            var text = "\(window.label) \(Int(window.usedPercent))%"
+            if let resets = window.resetsAt { text += " (resets in \(format(resets.timeIntervalSince(snapshot.at))))" }
+            return text
+        }
+        if !windows.isEmpty {
+            print("")
+            print("quota \(quota.agent.displayName): \(windows.joined(separator: ", "))  — sampled \(format(snapshot.at.timeIntervalSince(quota.sampledAt))) ago")
+        }
+    }
+
+    for team in snapshot.teams {
+        print("")
+        print("TEAM \(team.name)")
+        for member in team.members.sorted(by: { ($0.depth, $0.name) < ($1.depth, $1.name) }) {
+            let role = member.isLead ? "lead" : "d\(member.depth)"
+            print("  \(role.padding(toLength: 6, withPad: " ", startingAt: 0))\(member.name.padding(toLength: 20, withPad: " ", startingAt: 0))\(member.state.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0))\(member.activity ?? "")")
+        }
+        for edge in team.edges { print("  \(edge.from) → \(edge.to)") }
     }
 
     if verbose, !snapshot.rejected.isEmpty {
@@ -102,7 +122,7 @@ func render(_ snapshot: SessionRegistry.Snapshot, verbose: Bool) {
         print("REJECTED (\(snapshot.rejected.count))")
         print(String(repeating: "-", count: 104))
         for entry in snapshot.rejected {
-            print("  \(entry.file.padding(toLength: 16, withPad: " ", startingAt: 0))\(describe(entry.reason))")
+            print("  \(entry.agent.rawValue.padding(toLength: 12, withPad: " ", startingAt: 0))\(entry.file.padding(toLength: 16, withPad: " ", startingAt: 0))\(entry.reason)")
         }
     }
 }
@@ -121,7 +141,31 @@ print("config dir : \(locator.directory.path)")
 print("resolved by: \(describe(locator.source))")
 print("")
 
-let registry = SessionRegistry(source: ClaudeSessionSource(locator: locator))
+let manifests = AgentManifest.loadAll()
+for problem in manifests.problems { print("manifest   : \(problem)") }
+let manifestProviders: [SessionProvider] = manifests.manifests.map { ManifestProvider(manifest: $0) }
+for provider in manifestProviders.compactMap({ $0 as? ManifestProvider }) {
+    print("agent      : \(provider.manifest.displayName) at \(provider.home.path)")
+}
+print("")
+
+let hookStore = HookEventStore()
+let registry = SessionRegistry(providers: [
+    ClaudeProvider(source: ClaudeSessionSource(locator: locator), hooks: hookStore),
+] + manifestProviders)
+
+// The same listener the app runs, for watching hook-driven states from a terminal.
+var hookServer: HookServer?
+if arguments.contains("--hooks") {
+    let server = HookServer { event in
+        hookStore.apply(event)
+        print("hook       : \(event.name)\(event.toolName.map { " \($0)" } ?? "")  [\(event.sessionID.prefix(8))]")
+        Task { await registry.invalidate(.claudeCode) }
+    }
+    server.start()
+    hookServer = server
+    print("hooks      : listening on 127.0.0.1:\(server.port)")
+}
 
 if shouldWatch {
     print("watching \(locator.sessionsDirectory.path) — Ctrl-C to stop")

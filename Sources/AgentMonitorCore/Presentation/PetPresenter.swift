@@ -85,14 +85,23 @@ public struct PetPresenter: Sendable, Equatable {
         case .dormant:
             return .sleeping
         case .active(let state):
+            let glanceWorthy = attention >= .makeAware
             switch state {
             case .busy: return .working
+            case .compacting: return .digesting
+            case .subagentSwarm: return .swarming
             case .shell: return .resting
-            case .waiting: return .alert
+            case .waiting, .awaitingPermission, .awaitingAnswer: return .alert
             case .idle:
                 // An idle agent is waiting on you — but only worth looking at once the
                 // ladder says so, and it settles back down again after a while.
-                return attention >= .makeAware ? .attentive : .resting
+                return glanceWorthy ? .attentive : .resting
+            case .doneSuccess:
+                return glanceWorthy ? .done : .resting
+            case .doneError, .rateLimited, .contextCritical:
+                return .troubled
+            case .disconnected:
+                return glanceWorthy ? .troubled : .resting
             }
         }
     }
@@ -125,6 +134,10 @@ public struct PetPresenter: Sendable, Equatable {
         case .resting: return 8
         case .attentive: return 10
         case .alert: return 12
+        case .digesting: return 12
+        case .swarming: return 24
+        case .done: return 10
+        case .troubled: return 8
         }
     }
 }

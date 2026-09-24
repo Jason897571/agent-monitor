@@ -5,8 +5,9 @@ A desktop pet that ambiently mirrors what your AI coding agents are doing.
 Read [DESIGN.md](DESIGN.md) for what this is and why. [docs/RESEARCH.md](docs/RESEARCH.md)
 holds the evidence behind every claim in it.
 
-> Early, but it runs: the pet reads live Claude Code sessions and reacts to them.
-> Character art is a placeholder; Codex and the interactive features are not built.
+> Early, but it runs. The pet reads live Claude Code and Codex sessions and reacts to
+> them. The character art is a placeholder, and the interactive features (P2) are not
+> built.
 
 ## Build and run
 
@@ -17,8 +18,9 @@ swift run agent-monitor --selftest    # …and dump what the window server actua
 
 swift run agent-monitor-cli           # one-shot: every live session the core can see
 swift run agent-monitor-cli watch     # follow live, printing whenever the pet would change
+swift run agent-monitor-cli watch --hooks   # …and receive Claude Code hooks, like the app
 
-./scripts/test.sh                     # 108 tests
+./scripts/test.sh                     # 172 tests
 ./scripts/measure.sh                  # CPU and memory per pet state
 ./scripts/package.sh 0.1.0            # dist/Agent Monitor.app + a drag-to-install DMG
 ```
@@ -32,8 +34,38 @@ Privacy & Security, or run:
 xattr -dr com.apple.quarantine "/Applications/Agent Monitor.app"
 ```
 
-Quit it, or switch between the pet and the notch bar, from the paw-print icon in the
-menu bar.
+The paw-print icon in the menu bar lets you switch between the pet and the notch bar,
+quit, and turn on the two optional feeds below.
+
+## Optional feeds
+
+Without these, the app changes nothing on your machine. With nothing configured it
+already recognises 9 of the 13 states. It tells a permission prompt apart from a
+question, and it recognises:
+
+- a finished turn
+- a failed turn
+- a turn that ran out of quota
+- a crashed session
+
+It also reads Codex. The two feeds below add the remaining states. Each one is opt-in,
+shows a confirmation dialog that says exactly what it will change, backs up
+`settings.json` first, and can be removed from the same menu.
+
+- **Claude hook.** Appends 13 `type: "http"` hooks to `settings.json`, pointed at
+  `127.0.0.1:47291`. They add three states: compacting, several subagents running, and
+  which tool is running right now. The hooks load into running sessions immediately,
+  with no restart. If the app is not running while a hook fires, Claude records a
+  non-blocking hook error and carries on.
+- **Quota and context.** Claude Code gives its status line command the plan's quota
+  and the context-window usage. If your `statusLine` is empty, the app can fill it with
+  a small script that saves a copy of those numbers. If the slot is already taken, the
+  app never touches it. Instead it copies a one-line wrapper to your clipboard, and you
+  paste it in front of your existing command yourself. Nothing is fetched from the
+  Keychain or from any API.
+
+Adding another agent means writing a JSON manifest, not Swift. See
+[docs/AGENTS.md](docs/AGENTS.md).
 
 Requires macOS 14+ and a Swift 6 toolchain. Xcode is **not** required — the Command
 Line Tools are enough.
@@ -49,13 +81,16 @@ passes nothing extra when a full Xcode is installed. Run it rather than `swift t
 Sources/
   AgentMonitorCore/     the state engine — no AppKit, deliberately
     Model/              AgentSession, SessionState, AggregateState, SessionSummary
-    Claude/             Claude Code adapter (config, session files, liveness, titles)
+    Claude/             Claude Code adapter (session files, transcript tail, tasks, teams, statusline)
+    Hooks/              the optional hook channel: HTTP receiver, event store, settings.json edits
+    Manifest/           declarative adapters; Codex is the first
     Attention/          the five-level escalation ladder, as data
     Presentation/       poses, fading, frame budget, power throttling
     Registry/           FSEvents + reconcile, snapshots out
     System/             sysctl process inspection, directory watching
   AgentMonitorApp/      the only target that touches AppKit
   AgentMonitorCLI/      a harness for verifying the read path against a real machine
+manifests/              agent manifests (built into the app; your own go in ~/Library/…)
 ```
 
 `AgentMonitorCore` has no UI dependency on purpose. The pet is meant to be one
@@ -64,7 +99,7 @@ DESIGN.md §8.
 
 ## Status
 
-**Working** — P0 is complete.
+**Working.** P0 and P1 are complete.
 
 - Resolves Claude Code's config directory, honouring `CLAUDE_CONFIG_DIR`, and falling
   back to reading it out of a running `claude` process when our own environment does
@@ -96,11 +131,26 @@ DESIGN.md §8.
 - Hover the pet or the docked bar for a card listing every session; click a row to
   bring forward the app it runs in (Ghostty, Cursor, iTerm…). App-level only — the
   right window of that app, not yet the exact tab or split.
-- 98 tests, several of which are regression locks on traps documented in DESIGN.md §7.
+- Thirteen states. Every source other than the session file can only *refine* what the
+  file says, never contradict it. That rule is what keeps a stale hook event or an
+  hour-old statusline sample from putting a session in the wrong state.
+- Captions. A short bubble appears over the pet when what it has to say changes. The
+  text is the agent's own: `activeForm` while it works, the `away_summary` recap once
+  it stops.
+- Codex, read passively from its rollout files through a manifest, including context
+  use and plan quota. Sessions in the Codex desktop app are attributed to its app
+  server.
+- Agent teams. Teammates appear as small companions next to the pet, laid out by
+  dependency depth. A teammate that is idle while its work is unblocked shows up as
+  stalled.
+- Quota. When a window crosses 90% the pet mentions it once, with the reset time, and
+  after that it appears only in the card.
+- 172 tests, several of which are regression locks on traps documented in DESIGN.md §7.
 
 **Not built yet**
 
-Real character art, Codex, and everything in P1/P2. See DESIGN.md §6.
+Real character art and everything in P2. The agent-team topology has only been
+verified against synthetic data. See DESIGN.md §6.
 
 **Measured**
 

@@ -460,13 +460,47 @@ link.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 12, preferr
 
 ### P1 — 丰满状态 + 多 agent（目标 +3–4 周）
 
-- [ ] 可选 hook 安装（`type: "http"` 指向 `127.0.0.1:<port>`，避免每次工具调用 fork 一个 shell）
-- [ ] 完整 13 状态模型（含 `compacting` / `done-error` / `context-critical` / `subagent-swarm`）
-- [ ] `away_summary` / `activeForm` 气泡
-- [ ] Codex 适配器（`hooks.json` + `app-server` 只读订阅）
-- [ ] 声明式 agent 清单格式 + 文档，开放贡献
-- [ ] **Agent Teams 多宠物拓扑**（支点 D）
-- [ ] 额度显示：**仅当 statusLine 槽位为空**时主动提议填充；已被占用则显示"额度不可用（statusLine 被 X 占用）"并提供一行 tee 脚本让用户自己加
+- [x] 可选 hook 安装（`type: "http"` 指向 `127.0.0.1:47291`，避免每次工具调用 fork 一个 shell）
+- [x] 完整 13 状态模型（含 `compacting` / `done-error` / `context-critical` / `subagent-swarm`）
+- [x] `away_summary` / `activeForm` 气泡
+- [x] Codex 适配器 —— **实现与原计划不同，见下**
+- [x] 声明式 agent 清单格式 + 文档，开放贡献（[docs/AGENTS.md](docs/AGENTS.md)）
+- [x] **Agent Teams 多宠物拓扑**（支点 D）—— 只用合成数据验证过，见下
+- [x] 额度显示：**仅当 statusLine 槽位为空**时主动提议填充；已被占用则显示"额度不可用（statusLine 被 X 占用）"并提供一行 tee 脚本让用户自己加
+
+**最大的发现：13 个状态里大半不需要 hook。** 各状态的信号来源如下：
+
+| 状态 | 来源 | 需要用户操作吗 |
+|---|---|---|
+| `awaitingPermission` / `awaitingAnswer` | session 文件的 `waitingFor`。Claude Code 用一张固定表来填这个字段：权限对话框默认填 `"permission prompt"`，elicitation 和 `AskUserQuestion` 填 `"input needed"`，沙箱网络请求填 `"sandbox request"` | 否 |
+| `doneSuccess` / `doneError` / `rateLimited` | transcript 尾部最新的一条消息。API 错误在 transcript 里单独占一行 assistant 记录，带 `isApiErrorMessage` 和 `error: "rate_limit"` 等字段（本机 transcript 里有 28 条这样的记录）。如果最新一条是用户消息，说明这一轮是被打断的，不是正常结束 | 否 |
+| `disconnected` | 曾经见过活着、之后进程死了而 session 文件还在（正常退出会删文件）。只显示 10 分钟 | 否 |
+| `compacting` / `subagentSwarm` / 当前工具 | hook | 安装 hook |
+| `contextCritical` + 额度 | statusline 数据 | 启用额度显示 |
+
+**合并规则是这一节最重要的不变量：** 任何次级信号都只能**细化** session 文件的状态，不能**推翻**它。`compacting` 只能落在 `busy` 上，`doneError` 只能落在 `idle` 上。于是一个错过了结束事件的陈旧 hook 覆盖层，最坏也只会在会话上留一条过期的细节，不会让状态本身出错。多个细化同时成立时取最紧急的那个，与信号到达的顺序无关（有测试锁住）。
+
+**hook 的实测：**
+- 返回 200 且响应体为空，Claude 视为"无决定"，工具照常执行。
+- app 没运行时连接会被拒绝，Claude 把它记为 non-blocking error，工具照常执行。这个代价会在安装对话框里写明。
+- 只订阅 13 个事件，刻意去掉两个。`PostToolUse` 能提供的信息，下一个 `PreToolUse` 或 `Stop` 都给了；`PermissionRequest` 不用 hook 就能从 `waitingFor` 看到。每多订阅一个事件，app 不在时就多一条错误。
+- 用真实的 `claude -p` 跑通了三条链：`PreCompact → compacting → PostCompact`，两个并行子 agent 触发 `subagentSwarm`，以及 `Stop`。
+- **一个预期之外的现象：** 主 agent 触发 `Stop` 之后，后台子 agent 还在运行，结束后以新一轮 `UserPromptSubmit` 的形式把结果送回来。所以 `Stop` 不能清零子 agent 计数。
+
+**Codex 的实现偏离：** 原计划是 `hooks.json` 加 `app-server` 订阅，实际改成被动读取 rollout 文件，并且用清单来描述（`manifests/codex.json`）。原因有三：
+- `app-server` 只能看到它自己托管的线程，看不到别的 codex 进程。
+- `hooks.json` 需要用户跑一次 `/hooks` 来信任它。
+- rollout 本身已经包含了需要的一切：`task_started` / `task_complete`（完成时带 `error` 字段），`token_count` 里的上下文用量和额度（`rate_limits.primary`），以及 `session_index.jsonl` 里的标题。
+
+Codex 不会一直打开 rollout 文件，所以判断存活靠的是进程：
+- CLI 进程按工作目录去认领对应的 rollout。
+- 桌面 app 的 app-server 按最近活动时间来认领，只认 `originator == "Codex Desktop"` 的 rollout。
+
+用本机 Codex 0.154 实测过：跑一次 `codex exec`，运行期间显示为 `busy`，完成时 `task_complete` 带着 403 错误，被识别为 `doneError`。
+
+**气泡是短暂出现的。** 只有文字变化时才出现，6 秒后消失，也不画尾巴，所以不会读起来像宠物在说话（§1）。文字是 Claude Code 自己写好的：工作时用 `activeForm`，停下后用 `away_summary`。没有 `activeForm` 时退回到当前工具，再退回到用户最后一条 prompt，prompt 会加引号，表示这是用户的原话。
+
+**Agent Teams 目前只用合成数据验证过。** 数据格式来自 Claude Code 二进制里的 schema：`teams/<team>/config.json` 记录 lead 会话 id 和成员，`tasks/<team>/<N>.json` 记录 owner、`blockedBy` 和 `activeForm`。拓扑的画法是：lead 就是宠物本身，队友按依赖深度排成列，箭头表示人和人之间的 `blockedBy` 关系。"停摆"的定义是：手上有依赖已经全部完成的任务，却没有在做。**还没有在真实的 team 运行中验证过**，这需要 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` 加上 tmux 或 iTerm 分屏。
 
 ### P2 — 交互（目标 +4–6 周，风险最高）
 
@@ -575,7 +609,7 @@ Tier 5 复制命令  「复制 cd 命令」—— 一行代码，永不失败
 |---|---|---|---|
 | 1 | **能耗未实测** | 最可能导致卸载，且是不可事后修改的架构选择 | 选渲染栈前跑 `sudo powermetrics`。**这是 P0 的阻塞项** |
 | 2 | macOS 15 上的置顶行为未验证 | 调研机器是 26.2；唯一找到的 15.0.1 报告是失败案例 | 首次启动做运行时自检（造一个全屏 Space 看 `isOnActiveSpace`），失败就降级成菜单栏形态 |
-| 3 | `sessions/*.json` 的 `status` 完全无文档 | 只观察到 4 个值和 1 次转换；写入时机和持久性未知 | 拿一个会话跑穿权限提示、compaction、崩溃，把真实状态机枚举出来 |
+| 3 | `sessions/*.json` 的 `status` 完全无文档 | 只观察到 4 个值和 1 次转换；写入时机和持久性未知 | **部分关闭**：从二进制里找到了 `waitingFor` 的填写表（见 P1）。`status` 的写入函数是 `isLoading \|\| delegatedActive ? "busy" : "idle"`，所以后台子 agent 还在跑时，会话一直算 busy |
 | 4 | 共存问题：用户同时装了别的监视器怎么办 | 本机已有 claude-hud + OpenUsage。两个监视器抢 statusLine、抢审批、都装 hook | 需要明确的"检测到已有 X"设计。目前所有竞品都没有 |
 | ~~5~~ | ~~空状态~~ | **已关闭**：`dormant` 睡觉 + 常驻淡出，规格见 B.1 | — |
 | ~~1~~ | ~~能耗未实测~~ | **大部分关闭**：渲染栈已选定并实测（§5.1/§5.2），精灵缓存把 24fps 从 3.55% 压到约 0.5% | 只剩一件事：在**空闲机器**上复测绝对值 |

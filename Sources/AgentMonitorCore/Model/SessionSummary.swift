@@ -22,20 +22,21 @@ public struct SessionSummary: Sendable, Equatable {
 
     public var isEmpty: Bool { total == 0 }
 
-    /// States worth a badge, most urgent first.
+    /// What the bar badges, most urgent first: at most three families — blocked on
+    /// you, in trouble, working — each labelled with its most urgent member state and
+    /// counting the whole family.
     ///
-    /// `shell` and `idle` are deliberately excluded when nothing else is happening —
-    /// a bar that always shows a number is a bar nobody reads. They appear only as part
-    /// of the total when something else is already drawing the eye.
+    /// `shell`, `idle` and a quietly finished turn are deliberately excluded — a bar that
+    /// always shows a number is a bar nobody reads. They appear only as part of the
+    /// total. And thirteen states cannot each get a badge on a one-dimensional strip; the
+    /// card is one hover away for the detail.
     public var badges: [(state: SessionState, count: Int)] {
-        SessionState.allCases
-            .sorted { $0.urgency > $1.urgency }
-            .compactMap { state in
-                let count = self.count(state)
-                guard count > 0 else { return nil }
-                guard state == .waiting || state == .busy else { return nil }
-                return (state, count)
-            }
+        let families: [(SessionState) -> Bool] = [\.isBlockedOnUser, \.isTrouble, \.isWorking]
+        return families.compactMap { belongs in
+            let members = counts.filter { belongs($0.key) && $0.value > 0 }
+            guard let top = members.keys.max(by: { $0.urgency < $1.urgency }) else { return nil }
+            return (top, members.values.reduce(0, +))
+        }
     }
 }
 

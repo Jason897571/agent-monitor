@@ -21,6 +21,9 @@ final class PetController {
     private let view: PetView
     private let docked: DockedPanel
     private let card = SessionCardPanel()
+    private let bubble = BubblePanel()
+    private let teamPanel = TeamPanel()
+    private var quotaNotifier = QuotaNotifier()
     private var presenter: PetPresenter
 
     private var streamTask: Task<Void, Never>?
@@ -84,6 +87,8 @@ final class PetController {
     func stop() {
         savePosition()
         closeCard()
+        bubble.reset()
+        teamPanel.orderOut(nil)
         streamTask?.cancel()
         presentationTimer?.invalidate()
         watchdog?.invalidate()
@@ -117,6 +122,10 @@ final class PetController {
         case .docked:
             panel.orderOut(nil)
             docked.orderFrontRegardless()
+            // Both are drawn around the pet; with no pet on screen they would float
+            // beside nothing.
+            bubble.reset()
+            teamPanel.orderOut(nil)
         }
         // The hidden shell must stop costing anything; `PowerConditions` already knows
         // how to express "nothing of this is on screen".
@@ -128,6 +137,7 @@ final class PetController {
     private func apply(_ snapshot: SessionRegistry.Snapshot) {
         latest = snapshot
         if card.isShowing { showCard() }
+        updateCompanions(snapshot)
         presenter.observe(
             aggregate: snapshot.aggregate,
             attention: snapshot.attention.level,
@@ -173,6 +183,48 @@ final class PetController {
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = CGFloat(target)
+        }
+    }
+
+    // MARK: - Bubble and team
+
+    /// The caption and the team diagram, both of which only exist next to the pet.
+    private func updateCompanions(_ snapshot: SessionRegistry.Snapshot) {
+        guard mode == .pet else { return }
+
+        if snapshot.aggregate.isDormant {
+            bubble.reset()
+            teamPanel.orderOut(nil)
+            return
+        }
+
+        let focus = BubbleText.focus(in: snapshot)
+        let team = snapshot.teams.first { $0.leadSessionId == focus?.id } ?? snapshot.teams.first
+        teamPanel.show(team, beside: panel.frame, on: panel.screen)
+
+        // A spent quota is announced once per window, with the reset time — then only
+        // the card mentions it. DESIGN.md §2 支点 C.
+        if let (agent, window) = quotaNotifier.newlyNearLimit(in: snapshot.quotas).first {
+            var text = "\(agent.displayName) \(window.label) 额度已用 \(Int(window.usedPercent))%"
+            if let resets = window.resetsAt { text += " · \(SessionCardView.until(resets, now: Date()))重置" }
+            bubble.show(text, tint: StateStyle.colour(.waiting), near: panel.frame, on: panel.screen, duration: 10)
+            return
+        }
+
+        // The card says it all at greater length; two panels saying the same thing is one
+        // too many.
+        guard !card.isShowing, let focus,
+              let text = BubbleText.line(for: focus, among: snapshot.sessions.count) else { return }
+        bubble.show(text, tint: StateStyle.colour(focus.state), near: panel.frame, on: panel.screen)
+    }
+
+    /// Keeps the bubble and the team diagram attached while the pet is dragged.
+    private func followPet() {
+        bubble.follow(panel.frame, on: panel.screen)
+        if teamPanel.isVisible, let snapshot = latest {
+            let focus = BubbleText.focus(in: snapshot)
+            let team = snapshot.teams.first { $0.leadSessionId == focus?.id } ?? snapshot.teams.first
+            teamPanel.show(team, beside: panel.frame, on: panel.screen)
         }
     }
 
@@ -329,15 +381,16 @@ final class PetController {
     }
 
     func showCard() {
-        let sessions = latest?.sessions ?? []
+        bubble.hide()
+        let snapshot = latest
         let select: @MainActor (AgentSession) -> Void = { [weak self] session in
             self?.jump(to: session)
         }
         switch mode {
         case .pet:
-            card.show(sessions: sessions, near: panel.frame, on: panel.screen, edge: .side, onSelect: select)
+            card.show(snapshot: snapshot, near: panel.frame, on: panel.screen, edge: .side, onSelect: select)
         case .docked:
-            card.show(sessions: sessions, near: docked.frame, on: docked.screen, edge: .below, onSelect: select)
+            card.show(snapshot: snapshot, near: docked.frame, on: docked.screen, edge: .below, onSelect: select)
         }
         watchCard()
     }
@@ -398,6 +451,10 @@ final class PetController {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.refreshPowerConditions() }
             }
+        }
+
+        center.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.followPet() }
         }
 
         center.addObserver(

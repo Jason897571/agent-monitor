@@ -136,6 +136,18 @@ public enum ProcessInspector {
         procArgs(of: pid)?.arguments ?? []
     }
 
+    /// The process's current working directory, via `proc_pidinfo`. Same-user only, no
+    /// entitlement — and unlike the environment, not withheld from restricted binaries.
+    public static func workingDirectory(of pid: pid_t) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        return path.isEmpty ? nil : path
+    }
+
     // MARK: - Private
 
     private static func command(of proc: kinfo_proc) -> String {

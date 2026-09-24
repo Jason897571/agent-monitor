@@ -14,6 +14,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: PetController?
     private var statusMenu: StatusMenu?
+    private var integrations: Integrations?
     private let selfTestDuration: TimeInterval?
     private let fadePolicy: FadePolicy
     private let startMode: PetController.Mode?
@@ -37,14 +38,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let locator = ClaudeConfigLocator.resolve()
-        let controller = PetController(
-            registry: SessionRegistry(source: ClaudeSessionSource(locator: locator)),
-            fadePolicy: fadePolicy,
-            mode: startMode
-        )
+        let integrations = Integrations(locator: locator)
+        let registry = makeRegistry(locator: locator, integrations: integrations)
+        integrations.startServer { _ in
+            Task { await registry.invalidate(.claudeCode) }
+        }
+        let controller = PetController(registry: registry, fadePolicy: fadePolicy, mode: startMode)
         controller.start()
         self.controller = controller
-        statusMenu = StatusMenu(controller: controller)
+        self.integrations = integrations
+        statusMenu = StatusMenu(controller: controller, integrations: integrations)
         if showsCard {
             controller.pinsCard = true
             Task { @MainActor in
@@ -90,6 +93,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.stop()
             NSApp.terminate(nil)
         }
+    }
+
+    /// Claude Code, plus every agent described by a manifest.
+    private func makeRegistry(locator: ClaudeConfigLocator, integrations: Integrations) -> SessionRegistry {
+        let claude = ClaudeProvider(
+            source: ClaudeSessionSource(locator: locator),
+            hooks: integrations.hookStore,
+            statusline: integrations.statusline
+        )
+        let manifests = AgentManifest.loadAll()
+        for problem in manifests.problems { print("manifest: \(problem)") }
+        return SessionRegistry(providers: [claude] + manifests.manifests.map { ManifestProvider(manifest: $0) })
     }
 
     private func report(_ controller: PetController) {
@@ -176,7 +191,8 @@ application.run()
 /// refused, so this is measured rather than assumed.
 @MainActor
 func runJumpTest() async {
-    let registry = SessionRegistry(source: ClaudeSessionSource(locator: ClaudeConfigLocator.resolve()))
+    let registry = SessionRegistry(providers: [ClaudeProvider(source: ClaudeSessionSource(locator: ClaudeConfigLocator.resolve()))]
+        + AgentManifest.loadAll().manifests.map { ManifestProvider(manifest: $0) })
     let sessions = await registry.refresh().sessions
     print("HOST APPS")
     for session in sessions {

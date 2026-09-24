@@ -111,6 +111,46 @@ public struct AttentionPolicy: Sendable, Equatable {
                 EscalationStep(after: 300, level: .demandAttention),
                 EscalationStep(after: 3600, level: .makeAware),
             ]),
+            // A permission prompt is the purest case of blocked-and-yours: the agent
+            // stops dead until you press a key. So it earns the interrupt fastest.
+            .awaitingPermission: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 20, level: .interrupt),
+                EscalationStep(after: 300, level: .demandAttention),
+                EscalationStep(after: 3600, level: .makeAware),
+            ]),
+            .awaitingAnswer: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 60, level: .interrupt),
+                EscalationStep(after: 300, level: .demandAttention),
+                EscalationStep(after: 3600, level: .makeAware),
+            ]),
+            // Variants of busy. Nothing for you to do; the pose says what kind of busy.
+            .compacting: EscalationRule(initial: .changeBlind),
+            .subagentSwarm: EscalationRule(initial: .ignore),
+            // Worth knowing, not worth an interruption: you may want to start a fresh
+            // session before the next big task, but nothing is stuck.
+            .contextCritical: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 600, level: .changeBlind),
+            ]),
+            // Finished. Worth a glance straight away — that is the point of watching —
+            // and by design **never** an interrupt: a completed turn is good news, and
+            // good news that shouts trains you to ignore the shouting.
+            .doneSuccess: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 1800, level: .changeBlind),
+            ]),
+            // Went wrong, and only you can decide what next (retry, switch model, /login).
+            .doneError: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 120, level: .interrupt),
+                EscalationStep(after: 1800, level: .changeBlind),
+            ]),
+            // Nothing you can do but wait for the reset, so no interrupt — just make sure
+            // you know, so you are not left wondering why it stopped.
+            .rateLimited: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 1800, level: .changeBlind),
+            ]),
+            // A crash. Shown briefly so it is not silent; there is nothing to click.
+            .disconnected: EscalationRule(initial: .makeAware, steps: [
+                EscalationStep(after: 120, level: .changeBlind),
+            ]),
         ]
     )
 }

@@ -20,6 +20,14 @@ public enum PetPose: String, Sendable, Equatable, CaseIterable {
     case attentive
     /// An agent is blocked on the human.
     case alert
+    /// An agent is compacting its context: busy, but digesting rather than working.
+    case digesting
+    /// An agent has fanned out subagents.
+    case swarming
+    /// An agent just finished a turn. Content, never loud.
+    case done
+    /// Something went wrong: an API error, a spent quota, a crash, a full context.
+    case troubled
 }
 
 /// Everything the renderer needs for one frame's worth of decisions.

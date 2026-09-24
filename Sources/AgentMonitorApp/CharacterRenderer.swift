@@ -49,8 +49,17 @@ struct ProceduralCharacter: CharacterRenderer {
 
         drawEyes(pose: pose, phase: phase, metrics: metrics, palette: palette)
 
-        if pose == .working { drawWorkingIndicator(metrics: metrics, palette: palette, phase: phase) }
-        if pose == .sleeping { drawSleepMark(metrics: metrics, palette: palette, phase: phase) }
+        switch pose {
+        case .working: drawWorkingIndicator(metrics: metrics, palette: palette, phase: phase)
+        case .swarming:
+            drawWorkingIndicator(metrics: metrics, palette: palette, phase: phase)
+            drawSatellites(metrics: metrics, palette: palette, phase: phase)
+        case .sleeping: drawSleepMark(metrics: metrics, palette: palette, phase: phase)
+        case .digesting: drawDigestMark(metrics: metrics, palette: palette, phase: phase)
+        case .done: drawSparkle(metrics: metrics, palette: palette, phase: phase)
+        case .troubled: drawSweatDrop(metrics: metrics, palette: palette, phase: phase)
+        default: break
+        }
     }
 
     // MARK: - Pieces
@@ -80,6 +89,33 @@ struct ProceduralCharacter: CharacterRenderer {
                 path.lineWidth = 2
                 path.lineCapStyle = .round
                 path.stroke()
+
+            case .done:
+                // Upturned arcs — the universal "pleased" eye, legible at any size.
+                let path = NSBezierPath()
+                let width = metrics.eyeRadius * 1.5
+                path.move(to: NSPoint(x: center.x - width, y: center.y - width * 0.3))
+                path.curve(to: NSPoint(x: center.x + width, y: center.y - width * 0.3),
+                           controlPoint1: NSPoint(x: center.x - width * 0.4, y: center.y + width * 0.8),
+                           controlPoint2: NSPoint(x: center.x + width * 0.4, y: center.y + width * 0.8))
+                path.lineWidth = 2.2
+                path.lineCapStyle = .round
+                path.stroke()
+
+            case .troubled:
+                // Small eyes under slanted brows: worried, not panicked. Trouble is
+                // news, but mostly news the user cannot fix by rushing.
+                let radius = metrics.eyeRadius * 0.75
+                NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
+                                            width: radius * 2, height: radius * 2)).fill()
+                let brow = NSBezierPath()
+                let inner = center.x < metrics.body.midX ? center.x + radius * 1.6 : center.x - radius * 1.6
+                let outer = center.x < metrics.body.midX ? center.x - radius * 1.6 : center.x + radius * 1.6
+                brow.move(to: NSPoint(x: outer, y: center.y + radius * 2.2))
+                brow.line(to: NSPoint(x: inner, y: center.y + radius * 3.0))
+                brow.lineWidth = 1.8
+                brow.lineCapStyle = .round
+                brow.stroke()
 
             case .waking:
                 // Squinting open over the course of the animation.
@@ -139,6 +175,72 @@ struct ProceduralCharacter: CharacterRenderer {
         }
     }
 
+    /// Subagents as small orbiting companions — one pet with helpers around it.
+    private func drawSatellites(metrics: Metrics, palette: Palette, phase: Double) {
+        let count = 3
+        let radius = metrics.body.width * 0.07
+        let orbitX = metrics.body.width * 0.62
+        let orbitY = metrics.body.height * 0.18
+        for index in 0..<count {
+            let angle = (phase + Double(index) / Double(count)) * .pi * 2
+            let center = NSPoint(x: metrics.body.midX + CGFloat(cos(angle)) * orbitX,
+                                 y: metrics.body.maxY + CGFloat(sin(angle)) * orbitY)
+            palette.body.withAlphaComponent(0.95).setFill()
+            let dot = NSBezierPath(ovalIn: NSRect(x: center.x - radius, y: center.y - radius,
+                                                  width: radius * 2, height: radius * 2))
+            dot.fill()
+            palette.outline.setStroke()
+            dot.lineWidth = 1
+            dot.stroke()
+        }
+    }
+
+    /// Compacting: a slow swirl above the head.
+    private func drawDigestMark(metrics: Metrics, palette: Palette, phase: Double) {
+        let center = NSPoint(x: metrics.body.midX, y: metrics.body.maxY + metrics.body.height * 0.08)
+        let radius = metrics.body.width * 0.09
+        let start = CGFloat(phase * 360)
+        let arc = NSBezierPath()
+        arc.appendArc(withCenter: center, radius: radius, startAngle: start, endAngle: start + 270)
+        palette.accent.withAlphaComponent(0.8).setStroke()
+        arc.lineWidth = 2
+        arc.lineCapStyle = .round
+        arc.stroke()
+    }
+
+    private func drawSparkle(metrics: Metrics, palette: Palette, phase: Double) {
+        let twinkle = CGFloat(0.6 + 0.4 * sin(phase * .pi * 2))
+        let center = NSPoint(x: metrics.body.maxX - metrics.body.width * 0.02,
+                             y: metrics.body.maxY - metrics.body.height * 0.02)
+        let size = metrics.body.width * 0.09 * twinkle
+        let star = NSBezierPath()
+        star.move(to: NSPoint(x: center.x, y: center.y + size))
+        star.line(to: NSPoint(x: center.x, y: center.y - size))
+        star.move(to: NSPoint(x: center.x - size, y: center.y))
+        star.line(to: NSPoint(x: center.x + size, y: center.y))
+        palette.accent.withAlphaComponent(0.85).setStroke()
+        star.lineWidth = 2
+        star.lineCapStyle = .round
+        star.stroke()
+    }
+
+    private func drawSweatDrop(metrics: Metrics, palette: Palette, phase: Double) {
+        let slide = CGFloat(phase) * metrics.body.height * 0.08
+        let top = NSPoint(x: metrics.body.maxX - metrics.body.width * 0.12,
+                          y: metrics.body.maxY - metrics.body.height * 0.12 - slide)
+        let width = metrics.body.width * 0.05
+        let drop = NSBezierPath()
+        drop.move(to: top)
+        drop.curve(to: NSPoint(x: top.x, y: top.y - width * 3),
+                   controlPoint1: NSPoint(x: top.x + width * 1.6, y: top.y - width * 2.2),
+                   controlPoint2: NSPoint(x: top.x + width * 1.2, y: top.y - width * 3))
+        drop.curve(to: top,
+                   controlPoint1: NSPoint(x: top.x - width * 1.2, y: top.y - width * 3),
+                   controlPoint2: NSPoint(x: top.x - width * 1.6, y: top.y - width * 2.2))
+        NSColor(calibratedRed: 0.55, green: 0.75, blue: 0.95, alpha: 0.9).setFill()
+        drop.fill()
+    }
+
     private func drawSleepMark(metrics: Metrics, palette: Palette, phase: Double) {
         let drift = CGFloat(sin(phase * .pi * 2)) * metrics.body.width * 0.02
         let origin = NSPoint(x: metrics.body.maxX - metrics.body.width * 0.1,
@@ -169,10 +271,17 @@ struct ProceduralCharacter: CharacterRenderer {
             case .working: amplitude = 0.028
             case .alert: amplitude = 0.034
             case .waking: amplitude = 0.045
+            case .swarming: amplitude = 0.030
             default: amplitude = 0.016
             }
             let breath = CGFloat(sin(phase * .pi * 2)) * amplitude
             body = body.insetBy(dx: -body.width * breath, dy: -body.height * breath)
+
+            // Compacting squeezes: wider and flatter, then back.
+            if pose == .digesting {
+                let squeeze = CGFloat(sin(phase * .pi * 2)) * 0.05
+                body = body.insetBy(dx: -body.width * squeeze, dy: body.height * squeeze)
+            }
 
             // Waking is a stretch: squash low, then rise.
             if pose == .waking {
@@ -213,6 +322,18 @@ struct ProceduralCharacter: CharacterRenderer {
             case .alert:
                 body = NSColor(calibratedRed: 0.96, green: 0.66, blue: 0.48, alpha: 0.97)
                 accent = NSColor(calibratedRed: 0.72, green: 0.28, blue: 0.12, alpha: 1)
+            case .digesting:
+                body = NSColor(calibratedRed: 0.62, green: 0.74, blue: 0.93, alpha: 0.96)
+                accent = NSColor(calibratedRed: 0.20, green: 0.34, blue: 0.62, alpha: 1)
+            case .swarming:
+                body = NSColor(calibratedRed: 0.52, green: 0.82, blue: 0.72, alpha: 0.96)
+                accent = NSColor(calibratedRed: 0.10, green: 0.42, blue: 0.34, alpha: 1)
+            case .done:
+                body = NSColor(calibratedRed: 0.66, green: 0.78, blue: 0.97, alpha: 0.96)
+                accent = NSColor(calibratedRed: 0.95, green: 0.72, blue: 0.20, alpha: 1)
+            case .troubled:
+                body = NSColor(calibratedRed: 0.86, green: 0.62, blue: 0.64, alpha: 0.96)
+                accent = NSColor(calibratedRed: 0.62, green: 0.18, blue: 0.20, alpha: 1)
             }
         }
     }

@@ -134,8 +134,9 @@ struct SessionRegistryTests {
         _ = await waitForSnapshot(in: stream) { $0.sessions.first?.state == .busy }
         try sandbox.write(pid: 4242, status: "waiting", waitingFor: "input needed")
 
-        let snapshot = await waitForSnapshot(in: stream) { $0.sessions.first?.state == .waiting }
+        let snapshot = await waitForSnapshot(in: stream) { $0.sessions.first?.rawState == .waiting }
         #expect(snapshot?.sessions.first?.waitingFor == "input needed")
+        #expect(snapshot?.sessions.first?.state == .awaitingAnswer)
         #expect(snapshot?.attention.level == .makeAware)
         await registry.stop()
     }
@@ -201,7 +202,7 @@ struct SessionRegistryTests {
         let snapshot = await dead.refresh()
         #expect(snapshot.sessions.isEmpty)
         #expect(snapshot.aggregate == .dormant)
-        #expect(snapshot.rejected.contains { $0.reason == .processGone })
+        #expect(snapshot.rejected.contains { $0.reason == ClaudeSessionSource.Rejection.processGone.description })
     }
 
     /// The sessions directory does not exist until the user has run an agent once, so a

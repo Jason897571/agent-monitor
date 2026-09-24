@@ -22,14 +22,31 @@ public actor SessionRegistry {
         public let sessions: [AgentSession]
         public let aggregate: AggregateState
         public let attention: AttentionAssessment
-        public let rejected: [ClaudeSessionSource.Rejected]
+        public let rejected: [RejectedSession]
+        /// Plan usage per agent, where the agent reported it.
+        public let quotas: [QuotaSnapshot]
+        /// Agent teams led by a live session.
+        public let teams: [AgentTeam]
         public let at: Date
+
+        public init(sessions: [AgentSession], aggregate: AggregateState, attention: AttentionAssessment,
+                    rejected: [RejectedSession] = [], quotas: [QuotaSnapshot] = [], teams: [AgentTeam] = [],
+                    at: Date) {
+            self.sessions = sessions
+            self.aggregate = aggregate
+            self.attention = attention
+            self.rejected = rejected
+            self.quotas = quotas
+            self.teams = teams
+            self.at = at
+        }
 
         /// Whether anything a renderer would react to actually moved.
         ///
         /// Deliberately ignores `updatedAt`: an agent rewrites its session file on
         /// ordinary activity, and waking the pet for a timestamp it does not draw is
-        /// exactly the kind of idle cost the energy budget is meant to exclude.
+        /// exactly the kind of idle cost the energy budget is meant to exclude. Context
+        /// use is compared in whole percent for the same reason.
         func differsVisibly(from other: Snapshot) -> Bool {
             if attention.level != other.attention.level { return true }
             if attention.session?.id != other.attention.session?.id { return true }
@@ -39,15 +56,26 @@ public actor SessionRegistry {
                     || new.state != old.state
                     || new.waitingFor != old.waitingFor
                     || new.displayName != old.displayName
-                    || new.stateChangedAt != old.stateChangedAt {
+                    || new.stateChangedAt != old.stateChangedAt
+                    || new.title != old.title
+                    || new.activity != old.activity
+                    || new.recap != old.recap
+                    || new.problem != old.problem
+                    || new.subagents != old.subagents
+                    || new.team != old.team
+                    || new.contextUsedPercent.map(Int.init) != old.contextUsedPercent.map(Int.init) {
                     return true
                 }
             }
-            return false
+            if quotas.map({ $0.windows.map { "\($0.label)\(Int($0.usedPercent))" } })
+                != other.quotas.map({ $0.windows.map { "\($0.label)\(Int($0.usedPercent))" } }) {
+                return true
+            }
+            return teams != other.teams
         }
     }
 
-    private let source: ClaudeSessionSource
+    private let providers: [SessionProvider]
     private let escalator: AttentionEscalator
     /// Upper bound on time between liveness sweeps. Crashed sessions are invisible
     /// until one runs, so this is the worst-case lag on noticing a dead agent.
@@ -55,37 +83,42 @@ public actor SessionRegistry {
     /// Floor on timer sleeps, so a misconfigured policy can never spin.
     private let minReconcileInterval: TimeInterval
 
-    /// Remembers which sessions we have already gone looking for a title for.
-    ///
-    /// Titles live in transcripts, which are large, slugged under an irreversible
-    /// directory name, and only written once the model has something to name. So the
-    /// lookup is comparatively expensive, frequently returns nothing early in a
-    /// session, and must not be repeated on every scan.
-    private struct TitleLookup {
-        let title: String?
-        let checkedAt: Date
-    }
-
-    private var titles: [String: TitleLookup] = [:]
-    /// How long to wait before looking again for a title that was not there yet.
-    private let titleRetryInterval: TimeInterval = 120
-
-    private var watcher: DirectoryWatcher?
+    /// The last scan of each provider, by agent. A file event from one agent rescans that
+    /// agent only; the others' results are reused.
+    private var scans: [String: ProviderScan] = [:]
+    private var watchers: [String: DirectoryWatcher] = [:]
+    private var pendingInvalidations: Set<String> = []
+    private var invalidationTask: Task<Void, Never>?
     private var reconcileTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
     private var latest: Snapshot?
     private var isRunning = false
 
     public init(
+        providers: [SessionProvider],
+        escalator: AttentionEscalator = AttentionEscalator(),
+        maxReconcileInterval: TimeInterval = 30,
+        minReconcileInterval: TimeInterval = 1
+    ) {
+        self.providers = providers
+        self.escalator = escalator
+        self.maxReconcileInterval = maxReconcileInterval
+        self.minReconcileInterval = minReconcileInterval
+    }
+
+    /// Claude Code only, without the optional feeds — the P0 read path.
+    public init(
         source: ClaudeSessionSource = ClaudeSessionSource(),
         escalator: AttentionEscalator = AttentionEscalator(),
         maxReconcileInterval: TimeInterval = 30,
         minReconcileInterval: TimeInterval = 1
     ) {
-        self.source = source
-        self.escalator = escalator
-        self.maxReconcileInterval = maxReconcileInterval
-        self.minReconcileInterval = minReconcileInterval
+        self.init(
+            providers: [ClaudeProvider(source: source, statusline: nil)],
+            escalator: escalator,
+            maxReconcileInterval: maxReconcileInterval,
+            minReconcileInterval: minReconcileInterval
+        )
     }
 
     // MARK: - Lifecycle
@@ -107,7 +140,7 @@ public actor SessionRegistry {
         guard !isRunning else { return }
         isRunning = true
         _ = refresh()
-        startWatcherIfPossible()
+        startWatchersIfPossible()
         startReconcileLoop()
     }
 
@@ -115,8 +148,10 @@ public actor SessionRegistry {
         isRunning = false
         reconcileTask?.cancel()
         reconcileTask = nil
-        watcher?.stop()
-        watcher = nil
+        invalidationTask?.cancel()
+        invalidationTask = nil
+        for watcher in watchers.values { watcher.stop() }
+        watchers.removeAll()
         for continuation in continuations.values { continuation.finish() }
         continuations.removeAll()
     }
@@ -125,16 +160,55 @@ public actor SessionRegistry {
 
     // MARK: - Scanning
 
-    /// Rescans and publishes if anything visible moved. Safe to call at any time.
+    /// Rescans every provider and publishes if anything visible moved.
     @discardableResult
     public func refresh(now: Date = Date()) -> Snapshot {
-        let result = source.scan(now: now)
-        let sessions = result.sessions.map { enrich($0, now: now) }
+        for provider in providers {
+            scans[provider.agent.rawValue] = provider.scan(now: now)
+        }
+        return publish(now: now)
+    }
+
+    /// Something outside the filesystem changed what `agent` would report — a hook event
+    /// arrived. Coalesced: a burst of tool calls rescans once.
+    public func invalidate(_ agent: AgentKind) {
+        pendingInvalidations.insert(agent.rawValue)
+        guard invalidationTask == nil else { return }
+        invalidationTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            await self?.flushInvalidations()
+        }
+    }
+
+    private func flushInvalidations() {
+        invalidationTask = nil
+        guard isRunning else { return }
+        let agents = pendingInvalidations
+        pendingInvalidations.removeAll()
+        rescan(agents)
+    }
+
+    private func rescan(_ agents: Set<String>, now: Date = Date()) {
+        for provider in providers where agents.contains(provider.agent.rawValue) {
+            scans[provider.agent.rawValue] = provider.scan(now: now)
+        }
+        publish(now: now)
+        // A change may have moved what the ladder is counting down to, so the sleeping
+        // timer's deadline is now stale.
+        restartReconcileLoop()
+    }
+
+    @discardableResult
+    private func publish(now: Date) -> Snapshot {
+        let results = providers.compactMap { scans[$0.agent.rawValue] }
+        let sessions = results.flatMap(\.sessions).sorted { $0.stateChangedAt > $1.stateChangedAt }
         let snapshot = Snapshot(
             sessions: sessions,
-            aggregate: result.aggregate,
+            aggregate: AggregateState(sessions: sessions),
             attention: escalator.assess(sessions: sessions, now: now),
-            rejected: result.rejected,
+            rejected: results.flatMap(\.rejected),
+            quotas: results.compactMap(\.quota),
+            teams: results.flatMap(\.teams),
             at: now
         )
 
@@ -150,57 +224,31 @@ public actor SessionRegistry {
         continuations[id] = nil
     }
 
-    /// Attaches a title, looking one up only when we have not recently tried.
-    private func enrich(_ session: AgentSession, now: Date) -> AgentSession {
-        if let cached = titles[session.id] {
-            // A title we already found will not change in a way worth re-reading a
-            // transcript for; one we did not find might appear once the model names
-            // the session, so that case is retried on a slow cadence.
-            if cached.title != nil || now.timeIntervalSince(cached.checkedAt) < titleRetryInterval {
-                return session.withTitle(cached.title)
-            }
-        }
-
-        let title = ClaudeTranscript
-            .url(forSessionID: session.id, in: source.locator)
-            .flatMap { ClaudeTranscript.latestTitle(in: $0) }
-        titles[session.id] = TitleLookup(title: title, checkedAt: now)
-
-        // Drop entries for sessions that are gone, so a long-running monitor does not
-        // accumulate one per session the machine has ever had.
-        if titles.count > 256 {
-            let live = Set(sessions(from: titles.keys))
-            titles = titles.filter { live.contains($0.key) }
-        }
-        return session.withTitle(title)
-    }
-
-    private func sessions(from keys: Dictionary<String, TitleLookup>.Keys) -> [String] {
-        guard let latest else { return Array(keys) }
-        return latest.sessions.map(\.id)
-    }
-
     // MARK: - Watching
 
-    private func startWatcherIfPossible() {
-        guard watcher == nil else { return }
-        let watcher = DirectoryWatcher(url: source.locator.sessionsDirectory) { [weak self] paths in
-            // Ignore anything that is not a session document: the directory also picks
-            // up editor swap files and the occasional dotfile.
-            guard paths.isEmpty || paths.contains(where: { $0.hasSuffix(".json") }) else { return }
-            Task { await self?.handleFileEvent() }
-        }
-        if watcher.start() {
-            self.watcher = watcher
+    private func startWatchersIfPossible() {
+        for provider in providers {
+            for directory in provider.watchedDirectories where watchers[directory.path] == nil {
+                let agent = provider.agent.rawValue
+                let watcher = DirectoryWatcher(url: directory) { [weak self] _ in
+                    Task { await self?.handleFileEvent(agent: agent) }
+                }
+                if watcher.start() {
+                    watchers[directory.path] = watcher
+                }
+            }
         }
     }
 
-    private func handleFileEvent() {
+    private func handleFileEvent(agent: String) {
         guard isRunning else { return }
-        refresh()
-        // A file event may have changed what the ladder is counting down to, so the
-        // sleeping timer's deadline is now stale.
-        restartReconcileLoop()
+        pendingInvalidations.insert(agent)
+        guard invalidationTask == nil else { return }
+        // Coalesce: an agent streaming a turn appends to its log many times a second.
+        invalidationTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            await self?.flushInvalidations()
+        }
     }
 
     // MARK: - Reconciling
@@ -225,10 +273,9 @@ public actor SessionRegistry {
 
     private func reconcile() {
         guard isRunning else { return }
-        // Retry the watcher: the sessions directory does not exist until the user has
-        // run an agent at least once, so a monitor launched first would otherwise stay
-        // blind forever.
-        startWatcherIfPossible()
+        // Retry watchers: a directory does not exist until the user has run that agent
+        // at least once, so a monitor launched first would otherwise stay blind forever.
+        startWatchersIfPossible()
         refresh()
     }
 
@@ -238,9 +285,14 @@ public actor SessionRegistry {
         if let nextChange = latest?.attention.nextChange {
             delay = Swift.min(delay, nextChange.timeIntervalSince(now))
         }
-        // A missing watcher means we are polling for the directory to appear; do not
-        // let that stretch to the full liveness interval.
-        if watcher == nil {
+        // A disconnected session expires on a clock too.
+        if latest?.sessions.contains(where: { $0.state == .disconnected }) == true {
+            delay = Swift.min(delay, 60)
+        }
+        // The primary sessions directory missing means we are polling for it to appear;
+        // do not let that stretch to the full liveness interval. Optional directories
+        // (tasks, teams) are allowed to be absent for good.
+        if let primary = providers.first?.watchedDirectories.first, watchers[primary.path] == nil {
             delay = Swift.min(delay, 5)
         }
         return Swift.max(minReconcileInterval, delay)

@@ -13,7 +13,7 @@ public struct ClaudeSessionSource: Sendable {
 
     /// Why a session file did not become a live session. Surfaced for diagnostics —
     /// silent drops make this layer impossible to debug against real machines.
-    public enum Rejection: Sendable, Equatable {
+    public enum Rejection: Sendable, Equatable, CustomStringConvertible {
         case unreadable(String)
         /// No process holds this pid.
         case processGone
@@ -24,11 +24,26 @@ public struct ClaudeSessionSource: Sendable {
         case startTimeMismatch
         /// `status` was missing or is a value this build does not know.
         case unknownStatus(String?)
+
+        public var description: String {
+            switch self {
+            case .unreadable(let message): return "unreadable: \(message)"
+            case .processGone: return "process gone"
+            case .commandMismatch(let command): return "pid recycled (now '\(command)')"
+            case .startTimeMismatch: return "pid recycled (start time differs)"
+            case .unknownStatus(let raw): return "unknown status '\(raw ?? "nil")'"
+            }
+        }
     }
 
     public struct Rejected: Sendable, Equatable {
         public let file: String
         public let reason: Rejection
+    }
+
+    /// The pid a session file is named after, if it follows the `<pid>.json` pattern.
+    static func pid(fromFileName name: String) -> pid_t? {
+        pid_t(name.replacingOccurrences(of: ".json", with: ""))
     }
 
     public struct ScanResult: Sendable, Equatable {
@@ -126,7 +141,7 @@ public struct ClaudeSessionSource: Sendable {
             return .failure(.unknownStatus(file.status))
         }
 
-        return .success(AgentSession(
+        var session = AgentSession(
             id: file.sessionId,
             agent: .claudeCode,
             pid: file.pid,
@@ -140,6 +155,26 @@ public struct ClaudeSessionSource: Sendable {
             version: file.version,
             entrypoint: file.entrypoint,
             isBridged: file.bridgeSessionId != nil
-        ))
+        )
+        if let refined = refinement(forWaitingFor: file.waitingFor), state == .waiting {
+            session.refine(to: refined)
+        }
+        return .success(session)
+    }
+
+    /// What kind of wait a `waitingFor` string describes.
+    ///
+    /// Claude Code fills it from a fixed table in its dialog layer: every permission
+    /// dialog without an explicit label falls back to `"permission prompt"`, elicitations
+    /// and `AskUserQuestion` say `"input needed"`, a sandbox network exception says
+    /// `"sandbox request"`. So the two most important waits are distinguishable from the
+    /// session file alone — no hook required. Anything else (`"dialog open"`, `"goal
+    /// proposal"`, a string from a future release) stays plain `waiting`.
+    static func refinement(forWaitingFor waitingFor: String?) -> SessionState? {
+        switch waitingFor {
+        case "permission prompt", "sandbox request", "worker request": return .awaitingPermission
+        case "input needed": return .awaitingAnswer
+        default: return nil
+        }
     }
 }

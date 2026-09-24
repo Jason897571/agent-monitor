@@ -164,12 +164,5 @@ final class DockedView: NSView {
         text.draw(at: NSPoint(x: x, y: bounds.midY - 6))
     }
 
-    private func colour(for state: SessionState) -> NSColor {
-        switch state {
-        case .waiting: return NSColor(calibratedRed: 0.96, green: 0.55, blue: 0.33, alpha: 1)
-        case .busy: return NSColor(calibratedRed: 0.40, green: 0.83, blue: 0.68, alpha: 1)
-        case .idle: return NSColor(calibratedRed: 0.95, green: 0.83, blue: 0.52, alpha: 1)
-        case .shell: return NSColor(calibratedWhite: 0.6, alpha: 1)
-        }
-    }
+    private func colour(for state: SessionState) -> NSColor { StateStyle.nsColour(state) }
 }

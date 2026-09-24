@@ -10,7 +10,7 @@ import SwiftUI
 @MainActor
 final class SessionCardPanel: NSPanel {
 
-    private let host = FirstClickHostingView(rootView: SessionCardView(sessions: [], now: Date(), onSelect: { _ in }))
+    private let host = FirstClickHostingView(rootView: SessionCardView(snapshot: nil, now: Date(), onSelect: { _ in }))
     private let effect = NSVisualEffectView()
 
     init() {
@@ -68,13 +68,13 @@ final class SessionCardPanel: NSPanel {
 
     /// Shows or refreshes the card next to `anchor`, a frame in screen coordinates.
     func show(
-        sessions: [AgentSession],
+        snapshot: SessionRegistry.Snapshot?,
         near anchor: NSRect,
         on screen: NSScreen?,
         edge: Edge,
         onSelect: @escaping @MainActor (AgentSession) -> Void
     ) {
-        host.rootView = SessionCardView(sessions: sessions.orderedForDisplay(), now: Date(), onSelect: onSelect)
+        host.rootView = SessionCardView(snapshot: snapshot, now: Date(), onSelect: onSelect)
         let size = host.fittingSize
         let frame = switch edge {
         case .side: Self.placement(for: size, beside: anchor, within: screen?.visibleFrame)
@@ -142,16 +142,18 @@ final class FirstClickHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
-/// One row per session, most urgent first.
+/// One row per session, most urgent first; then teams; then plan usage.
 struct SessionCardView: View {
 
-    let sessions: [AgentSession]
+    let snapshot: SessionRegistry.Snapshot?
     let now: Date
     /// Called when a row is clicked.
     let onSelect: @MainActor (AgentSession) -> Void
 
     /// Beyond this the card stops being glanceable. The rest are summarised in a line.
     private let limit = 8
+
+    private var sessions: [AgentSession] { (snapshot?.sessions ?? []).orderedForDisplay() }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -178,8 +180,24 @@ struct SessionCardView: View {
                         .padding(.bottom, 10)
                 }
             }
+            ForEach(snapshot?.teams ?? [], id: \.name) { team in
+                Divider().opacity(0.4)
+                TeamSection(team: team)
+            }
+            if !quotaLines.isEmpty {
+                Divider().opacity(0.4)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(quotaLines, id: \.text) { line in
+                        Text(line.text)
+                            .font(.system(size: 11))
+                            .foregroundStyle(line.isNearLimit ? StateStyle.colour(.waiting) : .secondary)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            }
         }
-        .frame(width: 320, alignment: .leading)
+        .frame(width: 340, alignment: .leading)
     }
 
     private var header: some View {
@@ -193,13 +211,39 @@ struct SessionCardView: View {
     }
 
     private var summary: String {
-        let counts = SessionSummary(sessions: sessions)
+        let blocked = sessions.filter { $0.state.isBlockedOnUser }.count
+        let working = sessions.filter { $0.state.isWorking }.count
+        let trouble = sessions.filter { $0.state.isTrouble }.count
+        let rest = sessions.count - blocked - working - trouble
         var parts: [String] = []
-        if counts.count(.waiting) > 0 { parts.append("\(counts.count(.waiting)) 个在等你") }
-        if counts.count(.busy) > 0 { parts.append("\(counts.count(.busy)) 个工作中") }
-        let rest = counts.count(.idle) + counts.count(.shell)
+        if blocked > 0 { parts.append("\(blocked) 个在等你") }
+        if trouble > 0 { parts.append("\(trouble) 个有问题") }
+        if working > 0 { parts.append("\(working) 个工作中") }
         if rest > 0 { parts.append("\(rest) 个空闲") }
         return parts.joined(separator: " · ")
+    }
+
+    private var quotaLines: [(text: String, isNearLimit: Bool)] {
+        (snapshot?.quotas ?? []).compactMap { quota in
+            let windows = quota.current(now: now)
+            guard !windows.isEmpty else { return nil }
+            let parts = windows.map { window -> String in
+                var text = "\(window.label) \(Int(window.usedPercent.rounded()))%"
+                if window.isNearLimit, let resets = window.resetsAt {
+                    text += "（\(Self.until(resets, now: now))重置）"
+                }
+                return text
+            }
+            return ("\(quota.agent.displayName) 额度 · " + parts.joined(separator: " · "),
+                    windows.contains { $0.isNearLimit })
+        }
+    }
+
+    static func until(_ date: Date, now: Date) -> String {
+        let seconds = Int(max(0, date.timeIntervalSince(now)))
+        if seconds < 3600 { return "\(max(1, seconds / 60)) 分钟后" }
+        if seconds < 86_400 { return "\(seconds / 3600) 小时后" }
+        return "\(seconds / 86_400) 天后"
     }
 }
 
@@ -217,28 +261,41 @@ private struct SessionRow: View {
                 .frame(width: 7, height: 7)
                 .padding(.top, 5)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(session.displayName)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
+                    if session.agent != .claudeCode {
+                        Text(session.agent.displayName)
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.primary.opacity(0.1)))
+                    }
                     Spacer(minLength: 8)
-                    Text("\(label) · \(age)")
+                    Text("\(StateStyle.label(session.state)) · \(age)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .fixedSize()
                 }
-                if let waitingFor = session.waitingFor, session.state == .waiting {
-                    Text(waitingFor)
+                if let detail {
+                    Text(detail.text)
                         .font(.system(size: 11))
-                        .foregroundStyle(colour)
-                        .lineLimit(1)
+                        .foregroundStyle(detail.emphasised ? colour : .secondary)
+                        .lineLimit(detail.lines)
+                        .truncationMode(.tail)
                 }
                 if let title = session.title {
                     Text(title)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                }
+                if let extras {
+                    Text(extras)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
@@ -256,23 +313,37 @@ private struct SessionRow: View {
         .help("切到运行这个会话的应用")
     }
 
-    private var label: String {
+    /// The one line that says most about this session right now.
+    private var detail: (text: String, emphasised: Bool, lines: Int)? {
         switch session.state {
-        case .busy: return "工作中"
-        case .waiting: return "等你"
-        case .idle: return "空闲"
-        case .shell: return "shell"
+        case .waiting:
+            return session.waitingFor.map { ($0, true, 1) }
+        case .awaitingPermission, .awaitingAnswer:
+            return nil
+        case .doneError, .rateLimited:
+            return session.problem.map { ($0, true, 2) }
+        case .busy, .compacting, .subagentSwarm:
+            return session.activity.map { ("⋯ \($0)", false, 1) }
+        case .contextCritical:
+            return session.contextUsedPercent.map { ("上下文已用 \(Int($0))%，下个大任务前可以考虑新开会话", true, 2) }
+        case .idle, .doneSuccess:
+            return session.recap.map { ($0, false, 2) }
+        case .shell, .disconnected:
+            return nil
         }
     }
 
-    private var colour: Color {
-        switch session.state {
-        case .waiting: return Color(red: 0.96, green: 0.55, blue: 0.33)
-        case .busy: return Color(red: 0.40, green: 0.83, blue: 0.68)
-        case .idle: return Color(red: 0.75, green: 0.75, blue: 0.78)
-        case .shell: return Color(white: 0.55)
+    private var extras: String? {
+        var parts: [String] = []
+        if session.subagents > 0 { parts.append("\(session.subagents) 个子 agent") }
+        if let team = session.team { parts.append("团队 \(team)") }
+        if let used = session.contextUsedPercent, used >= 70, session.state != .contextCritical {
+            parts.append("上下文 \(Int(used))%")
         }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
+
+    private var colour: Color { StateStyle.colour(session.state) }
 
     private var age: String {
         let seconds = Int(max(0, session.timeInState(now: now)))
@@ -281,4 +352,65 @@ private struct SessionRow: View {
         if seconds < 86_400 { return "\(seconds / 3600) 小时" }
         return "\(seconds / 86_400) 天"
     }
+}
+
+/// A team as a list, lead first, in dependency order — the textual twin of the topology
+/// drawn around the pet.
+private struct TeamSection: View {
+    let team: AgentTeam
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text("团队 \(team.name)").font(.system(size: 11, weight: .semibold))
+                Spacer()
+                if !team.stalled.isEmpty {
+                    Text("\(team.stalled.count) 个停摆")
+                        .font(.system(size: 11))
+                        .foregroundStyle(StateStyle.colour(.waiting))
+                }
+            }
+            ForEach(team.members.sorted { ($0.isLead ? -1 : $0.depth, $0.name) < ($1.isLead ? -1 : $1.depth, $1.name) }) { member in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Circle().fill(colour(member.state)).frame(width: 6, height: 6)
+                    Text(member.isLead ? "\(member.name)（lead）" : member.name)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(member.activity.map { "\(label(member.state)) · \($0)" } ?? label(member.state))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .padding(.leading, CGFloat(member.isLead ? 0 : min(member.depth, 3)) * 10)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func label(_ state: TeammateState) -> String {
+        switch state {
+        case .working: return "工作中"
+        case .blocked: return "等依赖"
+        case .stalled: return "停摆"
+        case .idle: return "空闲"
+        }
+    }
+
+    private func colour(_ state: TeammateState) -> Color { TeamStyle.colour(state) }
+}
+
+enum TeamStyle {
+    static func nsColour(_ state: TeammateState) -> NSColor {
+        switch state {
+        case .working: return StateStyle.nsColour(.busy)
+        case .blocked: return StateStyle.nsColour(.idle)
+        case .stalled: return StateStyle.nsColour(.waiting)
+        case .idle: return StateStyle.nsColour(.shell)
+        }
+    }
+
+    static func colour(_ state: TeammateState) -> Color { Color(nsColor: nsColour(state)) }
 }

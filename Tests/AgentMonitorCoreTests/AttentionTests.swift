@@ -108,9 +108,14 @@ struct DefaultPolicyTests {
         #expect(rule.level(afterTimeInState: 6 * 3600) == .ignore)
     }
 
-    @Test("only waiting is ever allowed to interrupt")
-    func onlyWaitingInterrupts() {
-        for state in SessionState.allCases where state != .waiting {
+    /// DESIGN.md §2 支点 C: only a state that is blocked *and* that the user can resolve
+    /// earns an interrupt. An errored turn qualifies — the agent has stopped and the next
+    /// move (retry, switch model, /login) is the user's. A finished turn, a spent quota,
+    /// a crash, a full context: news, but nothing to press.
+    @Test("only blocked, user-resolvable states may interrupt")
+    func onlyBlockedStatesInterrupt() {
+        let allowed: Set<SessionState> = [.waiting, .awaitingPermission, .awaitingAnswer, .doneError]
+        for state in SessionState.allCases where !allowed.contains(state) {
             let rule = policy.rule(for: state)
             let worst = stride(from: 0.0, through: 14 * 86_400, by: 600)
                 .map { rule.level(afterTimeInState: $0) }
