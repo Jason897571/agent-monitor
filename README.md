@@ -11,9 +11,14 @@ holds the evidence behind every claim in it.
 
 ```sh
 swift build
+swift run agent-monitor               # the pet
+swift run agent-monitor --selftest    # …and dump what the window server actually thinks
+
 swift run agent-monitor-cli           # one-shot: every live session the core can see
 swift run agent-monitor-cli watch     # follow live, printing whenever the pet would change
-./scripts/test.sh
+
+./scripts/test.sh                     # 81 tests
+./scripts/measure.sh                  # CPU and memory per pet state
 ```
 
 Requires macOS 14+ and a Swift 6 toolchain. Xcode is **not** required — the Command
@@ -59,16 +64,28 @@ DESIGN.md §8.
   and a computed "when could this change on its own" deadline.
 - 61 tests, several of which are regression locks on traps documented in DESIGN.md §7.
 
+- A floating pet: a non-activating panel that joins every Space, never takes focus,
+  never appears in Cmd-Tab, is click-through except on the character itself, and can be
+  dragged and snapped to a screen edge. It sleeps when no agents are running, wakes
+  when one starts, and fades — but only ever while asleep.
+- Animation from pre-rendered sprite frames, at a frame rate chosen per pose and
+  paused outright once there is nothing to show.
+
 **Not built yet**
 
-Both window modes, sprite rendering, Codex, and everything in P1/P2. See DESIGN.md §6.
+The docked (notch) mode, real character art, Codex, and everything in P1/P2.
+See DESIGN.md §6.
 
 **Measured**
 
-Watching 14 live sessions, debug build: **0.083% of one core, 7.2 MB RSS** over a
-60-second run. The timer does not poll — it sleeps until the exact instant some
-session's attention level could change, and schedules nothing at all once they have
-all settled. The rendering layer is where the energy budget will actually be spent.
+The state engine costs 0.083% of one core watching 14 live sessions. The pet costs
+about 0.5% while animating at 24 fps, near zero once asleep and faded, and 0.09% while
+the display is asleep.
+
+Drawing the character live through Core Graphics cost 3.55% — pre-rendering the frames
+and swapping `layer.contents` cut that ~7×. Absolute numbers are provisional: the
+machine they were taken on had a load average of 17, and repeats of the same state
+spread 6×. See DESIGN.md §5.
 
 ## The two bugs worth knowing about
 
