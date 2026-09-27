@@ -232,7 +232,28 @@ final class PetView: NSView {
     /// this holds, so the pet cannot slip out from under the cursor mid-drag.
     var isDragging: Bool { dragOrigin != nil }
 
+    /// Supplies the right-click menu.
+    var contextMenuProvider: (() -> NSMenu)?
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        contextMenuProvider?()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        showContextMenu(for: event)
+    }
+
+    private func showContextMenu(for event: NSEvent) {
+        guard let menu = contextMenuProvider?() else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        // Control-click is a right click on a one-button mouse or trackpad.
+        if event.modifierFlags.contains(.control) {
+            showContextMenu(for: event)
+            return
+        }
         guard let window else { return }
         dragOrigin = NSEvent.mouseLocation - window.frame.origin
     }

@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.integrations = integrations
         statusMenu = StatusMenu(controller: controller, integrations: integrations,
                                 settings: SettingsWindowController(controller: controller, integrations: integrations))
+        if let statusMenu {
+            controller.contextMenuProvider = { [weak statusMenu] in statusMenu?.contextMenu() ?? NSMenu() }
+        }
         if arguments.contains("--settings") { statusMenu?.openSettings() }
         if showsCard {
             controller.pinsCard = true

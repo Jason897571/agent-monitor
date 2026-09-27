@@ -27,8 +27,15 @@ final class SettingsWindowController {
             window.title = "Agent Monitor 设置"
             window.contentView = NSHostingView(rootView: view)
             window.isReleasedWhenClosed = false
-            window.center()
             self.window = window
+        }
+        // On the pet's screen, not the "main" one: with several displays `center()`
+        // put it on a monitor the user was not looking at, and it looked like nothing
+        // had opened at all.
+        if let window, let screen = controller.currentScreen, !(window.isVisible && window.screen == screen) {
+            let bounds = screen.visibleFrame
+            window.setFrameOrigin(NSPoint(x: bounds.midX - window.frame.width / 2,
+                                          y: bounds.midY - window.frame.height / 2))
         }
         // An accessory app has no Dock icon to bring it forward; activate explicitly or
         // the window opens behind whatever the user was in.

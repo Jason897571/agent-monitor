@@ -37,6 +37,24 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     /// edit, so anything cached here would drift.
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        fill(menu)
+    }
+
+    /// The same menu, for right-clicking the pet or the docked bar.
+    ///
+    /// Needed because the status item is not a reliable way in: on a notched MacBook a
+    /// crowded menu bar hides status items behind the camera housing, with no sign
+    /// they are there at all. The pet itself is the one control that is always visible.
+    func contextMenu() -> NSMenu {
+        let menu = NSMenu()
+        fill(menu)
+        return menu
+    }
+
+    private func fill(_ menu: NSMenu) {
+        let settingsItem = action("设置…", #selector(openSettings), key: ",")
+        menu.addItem(settingsItem)
+        menu.addItem(.separator())
 
         let toggle = NSMenuItem(
             title: controller.currentMode == .pet ? "切换到刘海模式" : "切换到桌宠模式",
@@ -57,7 +75,6 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(action("自定义 agent 清单…", #selector(openManifests)))
-        menu.addItem(action("设置…", #selector(openSettings), key: ","))
 
         menu.addItem(.separator())
         menu.addItem(action("退出 Agent Monitor", #selector(quit), key: "q"))

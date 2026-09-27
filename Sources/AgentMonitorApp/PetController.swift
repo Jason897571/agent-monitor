@@ -30,6 +30,11 @@ final class PetController {
     private var streamTask: Task<Void, Never>?
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var rightClickMonitor: Any?
+    /// Builds the right-click menu. Set by whoever owns the menu (`StatusMenu`).
+    var contextMenuProvider: (() -> NSMenu)? {
+        didSet { view.contextMenuProvider = contextMenuProvider }
+    }
     private var presentationTimer: Timer?
     private var watchdog: Timer?
     private var hotkey: GlobalHotkey?
@@ -115,6 +120,7 @@ final class PetController {
         hotkey?.unregister()
         hotkey = nil
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
+        if let rightClickMonitor { NSEvent.removeMonitor(rightClickMonitor) }
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         Task { await registry.stop() }
     }
@@ -360,6 +366,11 @@ final class PetController {
             Task { @MainActor in handler(event) }
             return event
         }
+        // The docked bar is click-through by design, so it never sees its own clicks. A
+        // global monitor still does — enough to offer the menu on a right click there.
+        rightClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown]) { _ in
+            Task { @MainActor [weak self] in self?.dockedRightClick() }
+        }
     }
 
     private func updateHover() {
@@ -389,6 +400,19 @@ final class PetController {
         isHovered = hovering
         refreshPresentation()
         scheduleCard(visible: hovering)
+    }
+
+    private func dockedRightClick() {
+        guard mode == .docked, docked.isVisible else { return }
+        let point = NSEvent.mouseLocation
+        guard docked.frame.insetBy(dx: 0, dy: -1).contains(point), let menu = contextMenuProvider?() else { return }
+        closeCard()
+        menu.popUp(positioning: nil, at: NSPoint(x: point.x, y: docked.frame.minY - 4), in: nil)
+    }
+
+    /// The screen the pet (or the bar) is on — where anything opened from it should go.
+    var currentScreen: NSScreen? {
+        (mode == .pet ? panel.screen : docked.screen) ?? preferredScreen()
     }
 
     // MARK: - Detail card
