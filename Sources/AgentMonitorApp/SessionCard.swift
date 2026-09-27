@@ -256,28 +256,28 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            Circle()
-                .fill(colour)
-                .frame(width: 7, height: 7)
-                .padding(.top, 5)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
+            StatusGlyph(state: session.state)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(session.displayName)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
-                    if session.agent != .claudeCode {
-                        Text(session.agent.displayName)
-                            .font(.system(size: 9, weight: .medium))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Color.primary.opacity(0.1)))
-                    }
                     Spacer(minLength: 8)
-                    Text("\(StateStyle.label(session.state)) · \(age)")
-                        .font(.system(size: 11))
+                    Text(StateStyle.label(session.state))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(colour)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(colour.opacity(0.16)))
+                        .fixedSize()
+                    Text(age)
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
+                        .monospacedDigit()
                         .fixedSize()
                 }
+                ProductLabel(session: session)
                 if let detail {
                     Text(detail.text)
                         .font(.system(size: 11))
