@@ -4,7 +4,20 @@ The built-in character is a placeholder: a rounded shape drawn in code. A skin s
 for any character you have as animated GIFs, APNGs or still PNGs. Sticker packs work
 well because they already have transparent backgrounds.
 
-## Installing one
+## The settings window
+
+paw print → 设置… (⌘,) → 外观 does all of this without touching files:
+
+- create a skin
+- pick one per pose from the images in its folder
+- import or drag in a new image
+- set per-pose speed
+- resize the pet
+
+Every change applies to the pet immediately. The window writes the same `skin.json`
+format described below, so a skin you set up there can still be edited by hand.
+
+## Installing one by hand
 
 1. Make a folder under `~/Library/Application Support/AgentMonitor/skins/`. The menu
    item paw print → 角色 → 打开角色文件夹… opens that directory.

@@ -67,11 +67,26 @@ shows a confirmation dialog that says exactly what it will change, backs up
 Adding another agent means writing a JSON manifest, not Swift. See
 [docs/AGENTS.md](docs/AGENTS.md).
 
+## Settings
+
+paw print → 设置… (⌘,). Changes apply immediately. There are four tabs:
+
+- **外观.** The character and pet size. Pick an animation for each pose, or import
+  one.
+- **行为.** Pet or notch bar, whether and when it fades while asleep, captions, the
+  hover delay for the card, and launch at login.
+- **提醒.** Do-not-disturb (no sound, no captions; the pet still mirrors state), and
+  an optional sound when an agent has been blocked on you long enough to escalate.
+  It plays once per episode. A finished turn never makes a sound.
+- **数据源.** Claude hooks, the quota feed, Codex on or off, and the custom manifests
+  folder.
+
 ## Skins
 
 You can swap the placeholder character for any set of animated GIFs, APNGs or PNGs.
 Put them in a folder under `~/Library/Application Support/AgentMonitor/skins/` with a
-`skin.json`, then choose it from paw print → 角色. Each of the ten poses maps to one
+`skin.json` — or do it all from paw print → 设置… → 外观 — then choose it from
+paw print → 角色. Each of the ten poses maps to one
 file, and any pose you leave out falls back to the nearest one you have. See
 [docs/SKINS.md](docs/SKINS.md). Skins stay on your machine; they are not part of the
 app or this repository.

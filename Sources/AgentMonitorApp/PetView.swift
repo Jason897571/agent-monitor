@@ -172,6 +172,14 @@ final class PetView: NSView {
         CATransaction.commit()
     }
 
+    /// After a resize: the placeholder's frames and a skin's decoded frames were both
+    /// made for the old pixel size.
+    func sizeDidChange() {
+        sprites.invalidate()
+        displayedFrame = nil
+        presentCurrentFrame()
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         // Moving to a display with a different density would otherwise leave the pet

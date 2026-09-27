@@ -14,12 +14,14 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let controller: PetController
     private let integrations: Integrations
+    private let settings: SettingsWindowController
     /// The existing status line command, when the slot is occupied — what "copy" wraps.
     private var occupiedCommand: String?
 
-    init(controller: PetController, integrations: Integrations) {
+    init(controller: PetController, integrations: Integrations, settings: SettingsWindowController) {
         self.controller = controller
         self.integrations = integrations
+        self.settings = settings
         super.init()
 
         let image = NSImage(systemSymbolName: "pawprint.fill", accessibilityDescription: "Agent Monitor")
@@ -55,6 +57,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(action("自定义 agent 清单…", #selector(openManifests)))
+        menu.addItem(action("设置…", #selector(openSettings), key: ","))
 
         menu.addItem(.separator())
         menu.addItem(action("退出 Agent Monitor", #selector(quit), key: "q"))
@@ -136,6 +139,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleMode() { controller.toggleMode() }
+    @objc func openSettings() { settings.show() }
     @objc private func installHooks() { integrations.installHooks() }
     @objc private func uninstallHooks() { integrations.uninstallHooks() }
     @objc private func enableQuota() { integrations.enableQuota() }

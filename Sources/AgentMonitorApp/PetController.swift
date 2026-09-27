@@ -1,5 +1,6 @@
 import AgentMonitorCore
 import AppKit
+import Combine
 
 /// Wires the state engine to the windows: snapshots in, poses and opacity out.
 ///
@@ -41,17 +42,27 @@ final class PetController {
     /// Keeps the card open regardless of hover — for previewing it without a mouse.
     var pinsCard = false
     private var latest: SessionRegistry.Snapshot?
+    private let fadeOverride: FadePolicy?
     private var mode: Mode
 
-    private static let size = NSSize(width: 132, height: 132)
+    private var size: NSSize
+    private let prefs = Preferences.shared
+    private var prefsSubscription: AnyCancellable?
+    /// Sessions already announced with a sound, keyed by id and the moment their state
+    /// began: one sound per stuck episode, never a repeat for the same one.
+    private var announced: Set<String> = []
     private static let modeKey = "pet.mode"
     private static let skinKey = "pet.skin"
 
-    init(registry: SessionRegistry, fadePolicy: FadePolicy = .default, mode: Mode? = nil) {
+    /// `fadePolicy` overrides the preference — for the command-line test flags.
+    init(registry: SessionRegistry, fadePolicy: FadePolicy? = nil, mode: Mode? = nil) {
+        let side = Preferences.shared.petSize
+        self.size = NSSize(width: side, height: side)
         self.registry = registry
-        self.presenter = PetPresenter(fadePolicy: fadePolicy)
-        self.panel = PetPanel(size: Self.size)
-        self.view = PetView(frame: NSRect(origin: .zero, size: Self.size))
+        self.presenter = PetPresenter(fadePolicy: fadePolicy ?? Preferences.shared.fadePolicy)
+        self.fadeOverride = fadePolicy
+        self.panel = PetPanel(size: size)
+        self.view = PetView(frame: NSRect(origin: .zero, size: size))
         self.docked = DockedPanel()
         self.mode = mode
             ?? Mode(rawValue: UserDefaults.standard.string(forKey: Self.modeKey) ?? "")
@@ -80,6 +91,13 @@ final class PetController {
             }
         }
 
+        // Settings apply live. `receive(on:)` hops a run loop turn, so the new value is
+        // in place by the time we read it — `objectWillChange` fires before the write.
+        prefsSubscription = prefs.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applyPreferences() }
+        applyPreferences()
+
         installMouseMonitors()
         installHotkey()
         installWatchdog()
@@ -101,15 +119,46 @@ final class PetController {
         Task { await registry.stop() }
     }
 
+    // MARK: - Preferences
+
+    private func applyPreferences() {
+        if fadeOverride == nil, presenter.fadePolicy != prefs.fadePolicy {
+            presenter.fadePolicy = prefs.fadePolicy
+            refreshPresentation()
+        }
+        if !prefs.captionsAllowed { bubble.reset() }
+        let side = prefs.petSize
+        if abs(side - size.width) > 0.5 { resize(to: side) }
+        Task { [registry, prefs] in await registry.setEnabled(.codex, prefs.codexEnabled) }
+    }
+
+    /// Grows or shrinks the pet around its bottom centre — where it stands — and keeps
+    /// it on its screen.
+    private func resize(to side: CGFloat) {
+        let old = panel.frame
+        size = NSSize(width: side, height: side)
+        var frame = NSRect(x: old.midX - side / 2, y: old.minY, width: side, height: side)
+        if let bounds = panel.screen?.visibleFrame {
+            frame.origin.x = min(max(frame.minX, bounds.minX), bounds.maxX - side)
+            frame.origin.y = min(max(frame.minY, bounds.minY), bounds.maxY - side)
+        }
+        panel.setFrame(frame, display: true)
+        view.frame = NSRect(origin: .zero, size: size)
+        view.sizeDidChange()
+        savePosition()
+        followPet()
+    }
+
     // MARK: - Skin
 
-    var currentSkinID: String? { view.skin?.id }
+    /// The chosen skin's folder, even while it is too empty to load — a skin being set
+    /// up in the settings window stays selected before it has its first animation.
+    var currentSkinID: String? { UserDefaults.standard.string(forKey: Self.skinKey) }
 
     /// Switches the character. `nil` goes back to the built-in placeholder.
     func setSkin(id: String?) {
-        let skin = id.flatMap(SkinLibrary.load(id:))
-        UserDefaults.standard.set(skin?.id, forKey: Self.skinKey)
-        applySkin(skin)
+        UserDefaults.standard.set(id, forKey: Self.skinKey)
+        applySkin(id.flatMap(SkinLibrary.load(id:)))
         refreshPresentation()
     }
 
@@ -158,6 +207,7 @@ final class PetController {
 
     private func apply(_ snapshot: SessionRegistry.Snapshot) {
         latest = snapshot
+        soundIfNeeded(snapshot)
         if card.isShowing { showCard() }
         updateCompanions(snapshot)
         presenter.observe(
@@ -208,6 +258,19 @@ final class PetController {
         }
     }
 
+    // MARK: - Sound
+
+    /// One sound when the ladder reaches `interrupt` — the rung DESIGN.md reserves for
+    /// "blocked, and only you can unblock it" — and only if the user asked for sound.
+    private func soundIfNeeded(_ snapshot: SessionRegistry.Snapshot) {
+        guard snapshot.attention.level >= .interrupt, let session = snapshot.attention.session else { return }
+        let key = "\(session.id)@\(session.stateChangedAt.timeIntervalSince1970)"
+        guard !announced.contains(key) else { return }
+        announced.insert(key)
+        if announced.count > 200 { announced = [key] }
+        if prefs.soundAllowed { prefs.playSound() }
+    }
+
     // MARK: - Bubble and team
 
     /// The caption and the team diagram, both of which only exist next to the pet.
@@ -229,15 +292,18 @@ final class PetController {
         if let (agent, window) = quotaNotifier.newlyNearLimit(in: snapshot.quotas).first {
             var text = "\(agent.displayName) \(window.label) 额度已用 \(Int(window.usedPercent))%"
             if let resets = window.resetsAt { text += " · \(SessionCardView.until(resets, now: Date()))重置" }
-            bubble.show(text, tint: StateStyle.colour(.waiting), near: panel.frame, on: panel.screen, duration: 10)
+            if prefs.captionsAllowed {
+                bubble.show(text, tint: StateStyle.colour(.waiting), near: panel.frame, on: panel.screen, duration: 10)
+            }
             return
         }
 
         // The card says it all at greater length; two panels saying the same thing is one
         // too many.
-        guard !card.isShowing, let focus,
+        guard prefs.captionsAllowed, !card.isShowing, let focus,
               let text = BubbleText.line(for: focus, among: snapshot.sessions.count) else { return }
-        bubble.show(text, tint: StateStyle.colour(focus.state), near: panel.frame, on: panel.screen)
+        bubble.show(text, tint: StateStyle.colour(focus.state), near: panel.frame, on: panel.screen,
+                    duration: prefs.bubbleSeconds)
     }
 
     /// Keeps the bubble and the team diagram attached while the pet is dragged.
@@ -333,7 +399,7 @@ final class PetController {
     private func scheduleCard(visible: Bool) {
         cardTimer?.invalidate()
         guard visible else { return }
-        cardTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+        cardTimer = Timer.scheduledTimer(withTimeInterval: max(0.01, prefs.cardDelay), repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isHovered else { return }
                 self.showCard()
@@ -498,7 +564,7 @@ final class PetController {
     }
 
     private func restorePosition() {
-        if let origin = ScreenMemory.restore(size: Self.size) {
+        if let origin = ScreenMemory.restore(size: size) {
             panel.setFrameOrigin(origin)
         } else {
             placeAtDefaultPosition()
@@ -514,7 +580,7 @@ final class PetController {
         let bounds = screen.visibleFrame
         let margin: CGFloat = 24
         panel.setFrameOrigin(NSPoint(
-            x: bounds.maxX - Self.size.width - margin,
+            x: bounds.maxX - size.width - margin,
             y: bounds.minY + margin
         ))
     }

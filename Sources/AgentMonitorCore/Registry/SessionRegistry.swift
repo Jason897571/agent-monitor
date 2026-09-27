@@ -88,6 +88,8 @@ public actor SessionRegistry {
     private var scans: [String: ProviderScan] = [:]
     private var watchers: [String: DirectoryWatcher] = [:]
     private var pendingInvalidations: Set<String> = []
+    /// Agents the user switched off. Their providers are neither scanned nor published.
+    private var disabled: Set<String> = []
     private var invalidationTask: Task<Void, Never>?
     private var reconcileTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<Snapshot>.Continuation] = [:]
@@ -158,12 +160,20 @@ public actor SessionRegistry {
 
     public var current: Snapshot? { latest }
 
+    /// Turns an agent's sessions on or off without rebuilding the registry.
+    public func setEnabled(_ agent: AgentKind, _ enabled: Bool) {
+        let changed = enabled ? disabled.remove(agent.rawValue) != nil : disabled.insert(agent.rawValue).inserted
+        guard changed else { return }
+        if enabled { scans[agent.rawValue] = nil }
+        refresh()
+    }
+
     // MARK: - Scanning
 
     /// Rescans every provider and publishes if anything visible moved.
     @discardableResult
     public func refresh(now: Date = Date()) -> Snapshot {
-        for provider in providers {
+        for provider in providers where !disabled.contains(provider.agent.rawValue) {
             scans[provider.agent.rawValue] = provider.scan(now: now)
         }
         return publish(now: now)
@@ -189,7 +199,8 @@ public actor SessionRegistry {
     }
 
     private func rescan(_ agents: Set<String>, now: Date = Date()) {
-        for provider in providers where agents.contains(provider.agent.rawValue) {
+        for provider in providers where agents.contains(provider.agent.rawValue)
+            && !disabled.contains(provider.agent.rawValue) {
             scans[provider.agent.rawValue] = provider.scan(now: now)
         }
         publish(now: now)
@@ -200,7 +211,9 @@ public actor SessionRegistry {
 
     @discardableResult
     private func publish(now: Date) -> Snapshot {
-        let results = providers.compactMap { scans[$0.agent.rawValue] }
+        let results = providers
+            .filter { !disabled.contains($0.agent.rawValue) }
+            .compactMap { scans[$0.agent.rawValue] }
         let sessions = results.flatMap(\.sessions).sorted { $0.stateChangedAt > $1.stateChangedAt }
         let snapshot = Snapshot(
             sessions: sessions,

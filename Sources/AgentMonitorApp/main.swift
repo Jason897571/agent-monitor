@@ -16,10 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusMenu: StatusMenu?
     private var integrations: Integrations?
     private let selfTestDuration: TimeInterval?
-    private let fadePolicy: FadePolicy
+    private let fadePolicy: FadePolicy?
     private let startMode: PetController.Mode?
 
-    init(selfTestDuration: TimeInterval?, fadePolicy: FadePolicy, startMode: PetController.Mode?) {
+    init(selfTestDuration: TimeInterval?, fadePolicy: FadePolicy?, startMode: PetController.Mode?) {
         self.selfTestDuration = selfTestDuration
         self.fadePolicy = fadePolicy
         self.startMode = startMode
@@ -53,7 +53,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.start()
         self.controller = controller
         self.integrations = integrations
-        statusMenu = StatusMenu(controller: controller, integrations: integrations)
+        statusMenu = StatusMenu(controller: controller, integrations: integrations,
+                                settings: SettingsWindowController(controller: controller, integrations: integrations))
+        if arguments.contains("--settings") { statusMenu?.openSettings() }
         if showsCard {
             controller.pinsCard = true
             Task { @MainActor in
@@ -166,12 +168,11 @@ let selfTestDuration: TimeInterval? = arguments.contains("--selftest")
     ? (value(after: "--selftest") ?? 6)
     : nil
 
-// Exposed because it is a real preference (DESIGN.md §2 B.1 makes the fade delay
-// user-configurable), and because a ten-minute default is untestable by hand.
-let fadePolicy: FadePolicy = {
+// Overrides the fade preference for one run — a ten-minute default is untestable by hand.
+let fadePolicy: FadePolicy? = {
     if arguments.contains("--no-fade") { return .never }
     if let delay = value(after: "--fade-after") { return FadePolicy(delay: delay) }
-    return .default
+    return nil
 }()
 
 // Which shell to start in. Normally remembered from last run and toggled with the
