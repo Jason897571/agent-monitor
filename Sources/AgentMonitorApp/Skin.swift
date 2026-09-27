@@ -100,6 +100,17 @@ final class Skin {
         return animation
     }
 
+    /// How long a pose's animation runs, from frame delays alone — without decoding a
+    /// single frame. Decoding a 90-frame sticker just to learn its length cost seconds of
+    /// CPU at every launch.
+    func duration(of pose: PetPose) -> TimeInterval? {
+        guard let spec = poses[pose],
+              let source = CGImageSourceCreateWithURL(directory.appendingPathComponent(spec.file) as CFURL, nil)
+        else { return nil }
+        let total = (0..<CGImageSourceGetCount(source)).reduce(0.0) { $0 + SkinAnimation.delay(of: source, at: $1) }
+        return total / max(0.1, spec.speed ?? 1)
+    }
+
     /// First frame only, small — for the teammates drawn around the pet.
     func still(for pose: PetPose) -> CGImage? {
         guard let resolved = resolve(pose), let spec = poses[resolved] else { return nil }
@@ -150,7 +161,7 @@ struct SkinAnimation {
 
     /// Browsers treat GIF delays under 20 ms as 100 ms, and stickers are authored
     /// against that; honouring a literal 0 would play them at the display's refresh rate.
-    private static func delay(of source: CGImageSource, at index: Int) -> Double {
+    static func delay(of source: CGImageSource, at index: Int) -> Double {
         let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
         let container = (properties?[kCGImagePropertyGIFDictionary] ?? properties?[kCGImagePropertyPNGDictionary])
             as? [CFString: Any]

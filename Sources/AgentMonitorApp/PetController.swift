@@ -233,6 +233,11 @@ final class PetController {
 
         switch mode {
         case .pet:
+            // Derived here, from the power state the presentation was just computed
+            // against — never cached separately. A copy kept in sync by hand went stale
+            // at launch (occluded before the panel was on screen, cleared by `applyMode`
+            // without refreshing it) and pinned a skinned pet to its first frame.
+            view.frameRateCeiling = presenter.power.cap(24)
             view.presentation = presentation
             setOpacity(presentation.opacity)
         case .docked:
@@ -344,7 +349,6 @@ final class PetController {
         }
         guard power != presenter.power else { return }
         presenter.power = power
-        view.frameRateCeiling = power.cap(24)
         refreshPresentation()
     }
 

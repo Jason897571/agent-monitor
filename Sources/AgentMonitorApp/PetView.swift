@@ -104,7 +104,10 @@ final class PetView: NSView {
         // to the animation's own rate — but a pose the presenter paused stays paused, and
         // the power ceiling still holds.
         if fps > 0, let animation = currentAnimation {
-            fps = min(frameRateCeiling, max(fps, Int(animation.framesPerSecond.rounded())))
+            // Lifted to 15 at most: stickers are commonly authored at 25, and playing every
+            // one of those frames doubled the idle cost for a difference nobody sees at
+            // this size. Frames are picked by time, so motion speed is unchanged either way.
+            fps = min(frameRateCeiling, max(fps, min(15, Int(animation.framesPerSecond.rounded()))))
         }
         guard fps > 0 else {
             // A faded, sleeping pet has nothing worth a frame. Pausing outright — not
@@ -220,10 +223,8 @@ final class PetView: NSView {
     /// How long the skin's waking animation runs, so the presenter can hold the pose
     /// for exactly that long.
     var skinWakeDuration: TimeInterval? {
-        guard let skin else { return nil }
-        let pixels = Int(max(bounds.width, bounds.height) * (window?.backingScaleFactor ?? 2))
-        guard skin.resolve(.waking) == .waking else { return nil }
-        return skin.animation(for: .waking, pixels: pixels)?.duration
+        guard let skin, skin.resolve(.waking) == .waking else { return nil }
+        return skin.duration(of: .waking)
     }
 
     // MARK: - Dragging
